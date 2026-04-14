@@ -6,7 +6,6 @@ import io
 
 
 def read_xlsx_native(file) -> pd.DataFrame:
-    """Lee un .xlsx usando solo la librería estándar de Python."""
     content = file.read()
     z = zipfile.ZipFile(io.BytesIO(content))
 
@@ -36,7 +35,6 @@ def read_xlsx_native(file) -> pd.DataFrame:
             for ch in col_ref:
                 col_idx = col_idx * 26 + (ord(ch) - ord("A") + 1)
             col_idx -= 1
-
             v = cell.find(f"{ns}v")
             t = cell.get("t", "")
             if v is not None and v.text is not None:
@@ -57,18 +55,17 @@ def read_xlsx_native(file) -> pd.DataFrame:
 
 
 def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
-    """Parse a NEXTGEN quote xlsx and return (meta, items_df)."""
     df_raw = read_xlsx_native(file)
 
     meta = {}
     try:
         row1 = df_raw.iloc[1]
         meta["quote_number"] = str(row1[1]).strip()
-        meta["description"] = str(row1[4]).strip()
-        meta["expiry"] = str(row1[7]).split(" ")[0].strip()
-        meta["end_user"] = str(row1[26]).strip() if len(row1) > 26 else ""
-        meta["reseller"] = str(row1[31]).strip() if len(row1) > 31 else ""
-        meta["currency"] = str(row1[43]).strip() if len(row1) > 43 else "AUD"
+        meta["description"]  = str(row1[4]).strip()
+        meta["expiry"]       = str(row1[7]).split(" ")[0].strip()
+        meta["end_user"]     = str(row1[26]).strip() if len(row1) > 26 else ""
+        meta["reseller"]     = str(row1[31]).strip() if len(row1) > 31 else ""
+        meta["currency"]     = str(row1[43]).strip() if len(row1) > 43 else "AUD"
     except Exception:
         pass
 
@@ -78,41 +75,36 @@ def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
             line_no = int(float(str(row[0])))
         except (ValueError, TypeError):
             continue
-
-        sku = str(row[1]).strip()
+        sku         = str(row[1]).strip()
         description = str(row[2]).replace("_x000a_", " ").strip()
-
         try:
-            qty = int(float(str(row[5])))
+            qty        = int(float(str(row[5])))
             unit_price = float(str(row[6]))
-            total = float(str(row[7]))
+            total      = float(str(row[7]))
         except (ValueError, TypeError):
             continue
-
         items.append({
-            "#": line_no,
-            "SKU": sku,
-            "Descripción": description,
-            "Qty": qty,
+            "#":            line_no,
+            "SKU":          sku,
+            "Descripción":  description,
+            "Qty":          qty,
             "Precio Unit.": unit_price,
-            "Total": total,
+            "Total":        total,
         })
 
     return meta, pd.DataFrame(items)
 
 
 def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
-    """Parse a TECHDATA quote xlsx — pendiente de implementar."""
     return {}, pd.DataFrame()
 
 
 def apply_margin(items: pd.DataFrame, margin_pct: float) -> pd.DataFrame:
-    """Aplica margen: precio_venta = coste / (1 - margen)."""
     m = margin_pct / 100.0
     df = items.copy()
-    df["PVP Unit."] = df["Precio Unit."] / (1 - m)
-    df["PVP Total"] = df["PVP Unit."] * df["Qty"]
-    df["GST (10%)"] = df["PVP Total"] * 0.10
+    df["PVP Unit."]   = df["Precio Unit."] / (1 - m)
+    df["PVP Total"]   = df["PVP Unit."] * df["Qty"]
+    df["GST (10%)"]   = df["PVP Total"] * 0.10
     df["Total c/GST"] = df["PVP Total"] + df["GST (10%)"]
     return df
 
@@ -146,14 +138,15 @@ def show():
         return
 
     if items.empty:
-        st.error("No se encontraron line items en el fichero. ¿Es un quote NEXTGEN válido?")
+        st.error("No se encontraron line items. ¿Es un quote NEXTGEN válido?")
         return
 
+    # ── Metadata ──────────────────────────────────────────────────────────────
     st.markdown("### 📄 Información del Quote")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Quote #", meta.get("quote_number", "—"))
-    col2.metric("Expiry", meta.get("expiry", "—"))
-    col3.metric("Currency", meta.get("currency", "AUD"))
+    col1.metric("Quote #",  meta.get("quote_number", "—"))
+    col2.metric("Expiry",   meta.get("expiry",        "—"))
+    col3.metric("Currency", meta.get("currency",      "AUD"))
 
     with st.expander("Más detalles"):
         st.write(f"**Descripción:** {meta.get('description', '—')}")
@@ -162,11 +155,12 @@ def show():
 
     st.divider()
 
+    # ── Coste original ────────────────────────────────────────────────────────
     st.markdown("### 🛒 Coste Original (Distribuidor)")
     st.dataframe(
         items.style.format({
             "Precio Unit.": "$ {:,.2f}",
-            "Total": "$ {:,.2f}",
+            "Total":        "$ {:,.2f}",
         }),
         use_container_width=True,
         hide_index=True,
@@ -174,6 +168,7 @@ def show():
 
     st.divider()
 
+    # ── Margen ────────────────────────────────────────────────────────────────
     st.markdown("### 💰 Precio de Venta con Margen")
     margin_pct = st.number_input(
         "Margen (%)",
@@ -187,17 +182,13 @@ def show():
 
     df_margin = apply_margin(items, margin_pct)
 
-    display_cols = [
-        "#", "SKU", "Descripción", "Qty",
-        "Precio Unit.", "PVP Unit.", "PVP Total", "GST (10%)", "Total c/GST"
-    ]
-
+    # Solo: #, SKU, Descripción, Qty, PVP Unit., PVP Total, GST (10%), Total c/GST
+    display_cols = ["#", "SKU", "Descripción", "Qty", "PVP Unit.", "PVP Total", "GST (10%)", "Total c/GST"]
     st.dataframe(
         df_margin[display_cols].style.format({
-            "Precio Unit.": "$ {:,.2f}",
-            "PVP Unit.": "$ {:,.2f}",
-            "PVP Total": "$ {:,.2f}",
-            "GST (10%)": "$ {:,.2f}",
+            "PVP Unit.":   "$ {:,.2f}",
+            "PVP Total":   "$ {:,.2f}",
+            "GST (10%)":   "$ {:,.2f}",
             "Total c/GST": "$ {:,.2f}",
         }),
         use_container_width=True,
@@ -206,41 +197,27 @@ def show():
 
     st.divider()
 
+    # ── Resumen ───────────────────────────────────────────────────────────────
     st.markdown("### 📊 Resumen")
 
     coste_total = items["Total"].sum()
-    pvp_total = df_margin["PVP Total"].sum()
-    gst_total = df_margin["GST (10%)"].sum()
-    total_gst = df_margin["Total c/GST"].sum()
-    diferencia = pvp_total - coste_total
+    pvp_total   = df_margin["PVP Total"].sum()
+    gst_total   = df_margin["GST (10%)"].sum()
+    total_gst   = df_margin["Total c/GST"].sum()
+    diferencia  = pvp_total - coste_total
 
     resumen = pd.DataFrame([
-        {
-            "Concepto": "Coste total original",
-            "Importe AUD": f"$ {coste_total:,.2f}",
-        },
-        {
-            "Concepto": f"Precio total con margen {margin_pct:.1f}%",
-            "Importe AUD": f"$ {pvp_total:,.2f}",
-        },
-        {
-            "Concepto": "Diferencia",
-            "Importe AUD": f"$ {diferencia:,.2f}",
-        },
-        {
-            "Concepto": "GST (10%)",
-            "Importe AUD": f"$ {gst_total:,.2f}",
-        },
-        {
-            "Concepto": "Total con GST",
-            "Importe AUD": f"$ {total_gst:,.2f}",
-        },
+        {"Concepto": "Coste total original",                    "Importe AUD": f"$ {coste_total:,.2f}"},
+        {"Concepto": f"Precio total (margen {margin_pct:.1f}%)", "Importe AUD": f"$ {pvp_total:,.2f}"},
+        {"Concepto": "Diferencia",                              "Importe AUD": f"$ {diferencia:,.2f}"},
+        {"Concepto": "GST (10%)",                               "Importe AUD": f"$ {gst_total:,.2f}"},
+        {"Concepto": "Total con GST",                           "Importe AUD": f"$ {total_gst:,.2f}"},
     ])
 
     st.dataframe(resumen, use_container_width=True, hide_index=True)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Coste", f"AUD {coste_total:,.2f}")
-    c2.metric("Precio", f"AUD {pvp_total:,.2f}")
-    c3.metric("Dif.", f"AUD {diferencia:,.2f}")
+    c1.metric("Coste",       f"AUD {coste_total:,.2f}")
+    c2.metric("Precio",      f"AUD {pvp_total:,.2f}")
+    c3.metric("Diferencia",  f"AUD {diferencia:,.2f}")
     c4.metric("Total c/GST", f"AUD {total_gst:,.2f}")
