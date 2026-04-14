@@ -28,26 +28,10 @@ st.markdown("""
       letter-spacing: 0.04em; color: #ffffff !important;
   }
 
-  .user-badge {
-      display: flex; align-items: center; gap: 8px;
-      background: #1a2a3a; border: 1px solid #1e3a52;
-      border-radius: 8px; padding: 8px 12px; margin-bottom: 4px;
-  }
-  .user-badge span { font-size: 0.875rem; font-weight: 500; color: #a8bfd4 !important; }
-  .user-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; flex-shrink: 0; }
-
   div[data-testid="stRadio"] > label { display: none; }
 
   .block-container { padding-top: 2rem; padding-left: 2.5rem; padding-right: 2.5rem; }
   h1 { font-family: 'Satoshi', 'Inter', sans-serif !important; font-weight: 700; }
-
-  .welcome-card {
-      background: linear-gradient(135deg, #0f2a45 0%, #0a1f35 100%);
-      border: 1px solid #1e3a52; border-radius: 12px;
-      padding: 28px 32px; margin-bottom: 24px;
-  }
-  .welcome-card h2 { color: #ffffff; font-size: 1.4rem; font-weight: 600; margin-bottom: 4px; }
-  .welcome-card p { color: #7fa3c4; font-size: 0.9rem; margin: 0; }
 
   .login-logo { text-align: center; margin-bottom: 28px; padding-top: 16px; }
   .login-logo-text { font-size: 1.8rem; font-weight: 700; letter-spacing: 0.05em; color: #1a6fe8; margin-top: 8px; }
@@ -113,18 +97,9 @@ else:
         st.markdown(LOGO_SIDEBAR, unsafe_allow_html=True)
         st.divider()
 
-        st.markdown(
-            f'<div class="user-badge">'
-            f'<div class="user-dot"></div>'
-            f'<span>{st.session_state["username"]}</span>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-        st.divider()
-
         pagina = st.radio(
             "Menú",
-            ["🏠 Inicio", "📋 Quoting"],
+            ["📋 Quoting"],
             label_visibility="hidden"
         )
 
@@ -135,30 +110,6 @@ else:
             st.rerun()
 
     # ─── Pages ────────────────────────────────────────────────────────────────
-    if pagina == "🏠 Inicio":
-        col1, col2 = st.columns([0.05, 0.95])
-        with col1:
-            st.markdown(LOGO_SVG, unsafe_allow_html=True)
-        with col2:
-            st.title("MADIT")
-
-        st.markdown(
-            f'<div class="welcome-card">'
-            f'<h2>Bienvenido, {st.session_state["username"]} 👋</h2>'
-            f'<p>Selecciona una herramienta en el menú lateral para comenzar.</p>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-        st.subheader("Herramientas disponibles")
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            st.info("**📋 Quoting**\nGeneración de presupuestos")
-        with col_b:
-            st.warning("**🔧 Más herramientas**\nPróximamente...")
-        with col_c:
-            st.warning("**📊 Reportes**\nPróximamente...")
-
-    elif pagina == "📋 Quoting":
+    if pagina == "📋 Quoting":
         from tools.quoting import show
         show()
