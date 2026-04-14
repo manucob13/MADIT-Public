@@ -111,12 +111,19 @@ def fmt(val: float) -> str:
     return f"$ {val:,.2f}"
 
 
+def sync_top():
+    st.session_state["margin_value"] = st.session_state["margin_top"]
+
+def sync_summary():
+    st.session_state["margin_value"] = st.session_state["margin_summary"]
+
+
 def show():
     st.title("📋 Quoting")
 
-    # ── Initialise shared margin in session state ──────────────────────────────
-    if "margin_pct" not in st.session_state:
-        st.session_state["margin_pct"] = 10.0
+    # ── Single source of truth for margin ─────────────────────────────────────
+    if "margin_value" not in st.session_state:
+        st.session_state["margin_value"] = 10.0
 
     distributor = st.radio(
         "Distributor",
@@ -176,17 +183,21 @@ def show():
 
     # ── Sell price — margin input #1 ───────────────────────────────────────────
     st.markdown("### 💰 Sell Price with Margin")
+
     st.number_input(
         "Margin (%)",
         min_value=0.0,
         max_value=99.0,
         step=0.5,
         format="%.1f",
+        value=st.session_state["margin_value"],
         help="Formula: Sell Price = Cost / (1 - Margin)",
-        key="margin_pct",   # ← linked directly to session_state
+        key="margin_top",
+        on_change=sync_top,
     )
 
-    df_margin = apply_margin(items, st.session_state["margin_pct"])
+    margin = st.session_state["margin_value"]
+    df_margin = apply_margin(items, margin)
 
     st.dataframe(
         df_margin[["#", "SKU", "Description", "Qty", "Unit Price", "Total"]].style.format({
@@ -199,7 +210,7 @@ def show():
 
     st.divider()
 
-    # ── Summary — margin input #2 (synced) ────────────────────────────────────
+    # ── Summary — margin input #2 ──────────────────────────────────────────────
     st.markdown("### 📊 Summary")
 
     _, col_input, _ = st.columns([1, 2, 1])
@@ -210,16 +221,14 @@ def show():
             max_value=99.0,
             step=0.5,
             format="%.1f",
+            value=st.session_state["margin_value"],
             help="Formula: Sell Price = Cost / (1 - Margin)",
-            key="margin_pct_summary",   # different key — uses on_change to sync
-            value=st.session_state["margin_pct"],
-            on_change=lambda: st.session_state.update(
-                {"margin_pct": st.session_state["margin_pct_summary"]}
-            ),
+            key="margin_summary",
+            on_change=sync_summary,
         )
 
-    # Recalculate with the latest margin (whichever input was changed last)
-    margin = st.session_state["margin_pct"]
+    # Always recalculate from the single source of truth
+    margin = st.session_state["margin_value"]
     df_margin = apply_margin(items, margin)
 
     cost_total   = items["Total Cost"].sum()
