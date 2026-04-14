@@ -68,7 +68,6 @@ def read_xlsx_native(file) -> dict:
 
 
 def extract_amount(val: str) -> float:
-    """Safely extract a float from strings like '237.00 AUD', '3,515.68', '237.00'."""
     cleaned = val.replace(",", "")
     match = re.search(r'\d+\.?\d*', cleaned)
     if match:
@@ -138,7 +137,6 @@ def parse_nextgen(sheets: dict) -> tuple[dict, pd.DataFrame]:
 
 # ── TECHDATA parser ────────────────────────────────────────────────────────────
 def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
-    # Use Summary sheet for meta, General sheet for line items
     summary_key = next((k for k in sheets if k.strip().lower() == "summary"), None)
     general_key = next((k for k in sheets if k.strip().lower() == "general"), None)
     if general_key is None:
@@ -147,20 +145,17 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
     meta = {"currency": "AUD"}
     freight_amount = 0.0
 
-    # ── Extract meta from Summary sheet ───────────────────────────────────────
     if summary_key:
         df_sum = sheets[summary_key]
         for _, row in df_sum.iterrows():
             row_vals = [str(v).strip() for v in row]
             row_str  = " ".join(row_vals).lower()
-
             if "quote_number" not in meta:
                 for val in row_vals:
                     cleaned = val.replace("-", "").replace(" ", "")
                     if "-" in val and cleaned.isdigit() and 6 <= len(cleaned) <= 12:
                         meta["quote_number"] = val
                         break
-
             if "expiration date" in row_str or "expiry" in row_str:
                 for i, val in enumerate(row_vals):
                     if ("expiration" in val.lower() or "expiry" in val.lower()):
@@ -169,13 +164,11 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                                 meta["expiry"] = v
                                 break
                         break
-
             if "prepared by" in row_str:
                 for i, val in enumerate(row_vals):
                     if "prepared by" in val.lower() and i + 1 < len(row_vals) and row_vals[i+1]:
                         meta["prepared_by"] = row_vals[i+1]
                         break
-
             if "end user" in row_str:
                 for i, val in enumerate(row_vals):
                     if "end user" in val.lower():
@@ -185,30 +178,22 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                                 break
                         break
 
-    # ── Parse General sheet ────────────────────────────────────────────────────
     df_raw = sheets[general_key]
 
-    # Scan ALL rows first — capture meta fields + freight amount
     for _, row in df_raw.iterrows():
         row_vals = [str(v).strip() for v in row]
         row_str  = " ".join(row_vals).lower()
-
-        # Quote number fallback
         if "quote_number" not in meta:
             for val in row_vals:
                 cleaned = val.replace("-", "").replace(" ", "")
                 if "-" in val and cleaned.isdigit() and 6 <= len(cleaned) <= 12:
                     meta["quote_number"] = val
                     break
-
-        # Expiry fallback
         if "expiry" not in meta and ("expiration" in row_str or "expiry" in row_str):
             for val in row_vals:
                 if "/" in val and len(val) >= 8:
                     meta["expiry"] = val
                     break
-
-        # Freight — use extract_amount to handle "237.00 AUD" format
         if "freight charge" in row_str and freight_amount == 0.0:
             for val in row_vals:
                 amt = extract_amount(val)
@@ -216,15 +201,13 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                     freight_amount = amt
                     break
 
-    # Find header row (Line No. / Part No.)
     header_idx = None
     for i, row in df_raw.iterrows():
-        row_str_lower = " ".join(str(v).strip().lower() for v in row)
-        if "line no." in row_str_lower or ("part no." in row_str_lower and "qty" in row_str_lower):
+        rs = " ".join(str(v).strip().lower() for v in row)
+        if "line no." in rs or ("part no." in rs and "qty" in rs):
             header_idx = i
             break
 
-    # Read line items
     items = []
     if header_idx is not None:
         line_counter = 1
@@ -232,36 +215,25 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
             row      = df_raw.iloc[i]
             row_vals = [str(v).strip() for v in row]
             joined   = " ".join(row_vals).lower()
-
-            # Stop at summary rows
             if any(x in joined for x in ["subtotal", "general total", "freight", "gst:", "total:"]):
                 break
-
             try:
-                int(float(row_vals[0]))  # must start with a line number
+                int(float(row_vals[0]))
             except (ValueError, TypeError):
                 continue
-
             try:
-                sku         = row_vals[1]
-                qty         = int(float(row_vals[2]))
-                description = row_vals[3]
-                unit_price  = float(row_vals[7].replace(",", ""))
-                total       = float(row_vals[8].replace(",", ""))
+                items.append({
+                    "#":           line_counter,
+                    "SKU":         row_vals[1],
+                    "Description": row_vals[3],
+                    "Qty":         int(float(row_vals[2])),
+                    "Unit Cost":   float(row_vals[7].replace(",", "")),
+                    "Total Cost":  float(row_vals[8].replace(",", "")),
+                })
+                line_counter += 1
             except (ValueError, TypeError, IndexError):
                 continue
 
-            items.append({
-                "#":           line_counter,
-                "SKU":         sku,
-                "Description": description,
-                "Qty":         qty,
-                "Unit Cost":   unit_price,
-                "Total Cost":  total,
-            })
-            line_counter += 1
-
-    # Always append freight as last line item (if found)
     if freight_amount > 0:
         items.append({
             "#":           len(items) + 1,
@@ -303,36 +275,52 @@ def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
 
+# Columns that should be right-aligned (numbers)
+RIGHT_ALIGN_COLS = {"Qty", "Unit Cost", "Total Cost", "Unit Price", "Total"}
+
+
 def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
+    # Build per-column header alignment:
+    # number cols → center in header, right in body
+    # text cols   → left in both
+    def header_align(col):
+        return "center" if col in RIGHT_ALIGN_COLS else "left"
+
     styles = """
     <style>
       .madit-table { width:100%; border-collapse:collapse; font-size:0.78rem;
                      font-family:'Inter','Segoe UI',sans-serif; }
       .madit-table thead tr { background-color:#1a2a3a; color:#fff; }
-      .madit-table thead th { padding:8px 12px; text-align:left; font-weight:600;
+      .madit-table thead th { padding:8px 12px; font-weight:600;
                                letter-spacing:.03em; white-space:nowrap; }
       .madit-table tbody tr { border-bottom:1px solid #e8e8e8; }
       .madit-table tbody tr:nth-child(even) { background:#f7f9fb; }
       .madit-table tbody tr:hover { background:#eef3f8; }
       .madit-table tbody td { padding:6px 12px; color:#2c3e50; vertical-align:top; }
-      .madit-table .money { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+      .madit-table .left  { text-align:left; }
+      .madit-table .right { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
       .madit-table .total-row td { font-weight:700; background:#e8f0f7 !important;
                                     border-top:2px solid #1a2a3a; color:#0f1923; }
     </style>
     """
-    header = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in df.columns) + "</tr></thead>"
+
+    header = "<thead><tr>" + "".join(
+        f'<th style="text-align:{header_align(col)}">{col}</th>'
+        for col in df.columns
+    ) + "</tr></thead>"
+
     rows_html = ""
     for _, row in df.iterrows():
-        is_total = str(row.get("Description", "")).strip().upper() == "TOTAL"
+        is_total  = str(row.get("Description", "")).strip().upper() == "TOTAL"
         row_class = ' class="total-row"' if is_total else ""
         cells = ""
         for col in df.columns:
-            val = row[col]
-            if col in money_cols:
-                cells += f'<td class="money">{fmt(val)}</td>'
-            else:
-                cells += f"<td>{val}</td>"
+            val       = row[col]
+            css_class = "right" if col in RIGHT_ALIGN_COLS else "left"
+            display   = fmt(val) if col in money_cols else str(val) if val != "" else ""
+            cells    += f'<td class="{css_class}">{display}</td>'
         rows_html += f"<tr{row_class}>{cells}</tr>"
+
     return styles + f'<table class="madit-table">{header}<tbody>{rows_html}</tbody></table>'
 
 
@@ -342,17 +330,23 @@ def render_summary_table(summary: pd.DataFrame) -> str:
       .summary-table { width:100%; border-collapse:collapse; font-size:0.82rem;
                        font-family:'Inter','Segoe UI',sans-serif; }
       .summary-table thead tr { background:#1a2a3a; color:#fff; }
-      .summary-table thead th { padding:9px 16px; text-align:left; font-weight:600;
-                                  letter-spacing:.03em; }
+      .summary-table thead th { padding:9px 16px; text-align:center;
+                                  font-weight:600; letter-spacing:.03em; }
+      .summary-table thead th:first-child { text-align:left; }
       .summary-table tbody tr { border-bottom:1px solid #e0e0e0; }
       .summary-table tbody tr:last-child { font-weight:700; background:#e8f0f7;
                                             border-top:2px solid #1a2a3a; }
       .summary-table tbody td { padding:8px 16px; color:#2c3e50;
                                   font-variant-numeric:tabular-nums; }
+      .summary-table tbody td:first-child { text-align:left; }
       .summary-table tbody td:not(:first-child) { text-align:right; white-space:nowrap; }
     </style>
     """
-    header    = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in summary.columns) + "</tr></thead>"
+    header = (
+        "<thead><tr>"
+        + "".join(f"<th>{col}</th>" for col in summary.columns)
+        + "</tr></thead>"
+    )
     rows_html = "".join(
         "<tr>" + "".join(f"<td>{row[col]}</td>" for col in summary.columns) + "</tr>"
         for _, row in summary.iterrows()
@@ -377,7 +371,6 @@ def show():
     with st.spinner("Processing quote..."):
         sheets      = read_xlsx_native(uploaded)
         distributor = detect_distributor(sheets)
-
         if distributor == "NEXTGEN":
             meta, items = parse_nextgen(sheets)
         else:
@@ -387,7 +380,6 @@ def show():
         st.error("No line items found — is this a valid quote?")
         return
 
-    # Distributor badge
     badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
     st.markdown(
         f'<span style="background:{badge_color};color:#fff;padding:3px 10px;'
