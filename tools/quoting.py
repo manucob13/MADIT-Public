@@ -3,6 +3,7 @@ import pandas as pd
 import zipfile
 import xml.etree.ElementTree as ET
 import io
+import re
 
 
 # ── XLSX reader ────────────────────────────────────────────────────────────────
@@ -66,23 +67,31 @@ def read_xlsx_native(file) -> dict:
     return {name: parse_sheet(path) for name, path in sheet_map.items()}
 
 
+def extract_amount(val: str) -> float:
+    """Safely extract a float from strings like '237.00 AUD', '3,515.68', '237.00'."""
+    cleaned = val.replace(",", "")
+    match = re.search(r'\d+\.?\d*', cleaned)
+    if match:
+        try:
+            return float(match.group())
+        except ValueError:
+            pass
+    return 0.0
+
+
 # ── Auto-detect distributor ────────────────────────────────────────────────────
 def detect_distributor(sheets: dict) -> str:
-    """Returns 'TECHDATA', 'NEXTGEN', or 'UNKNOWN'."""
     all_text = ""
     for df in sheets.values():
         for _, row in df.iterrows():
             all_text += " ".join(str(v) for v in row).lower() + " "
         if len(all_text) > 5000:
             break
-
     if "tech data" in all_text or "techdata" in all_text or "1300 36 25 25" in all_text:
         return "TECHDATA"
     if "nextgen" in all_text or "next gen" in all_text:
         return "NEXTGEN"
-    # Fallback: check sheet names
-    sheet_names = " ".join(sheets.keys()).lower()
-    if "general" in sheet_names:
+    if "general" in " ".join(sheets.keys()).lower():
         return "TECHDATA"
     return "NEXTGEN"
 
@@ -124,28 +133,67 @@ def parse_nextgen(sheets: dict) -> tuple[dict, pd.DataFrame]:
             "Unit Cost":   unit_price,
             "Total Cost":  total,
         })
-
     return meta, pd.DataFrame(items)
 
 
 # ── TECHDATA parser ────────────────────────────────────────────────────────────
 def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
-    general_key = next(
-        (k for k in sheets if k.strip().lower() == "general"), None
-    )
+    # Use Summary sheet for meta, General sheet for line items
+    summary_key = next((k for k in sheets if k.strip().lower() == "summary"), None)
+    general_key = next((k for k in sheets if k.strip().lower() == "general"), None)
     if general_key is None:
         general_key = next(iter(sheets))
 
-    df_raw = sheets[general_key]
     meta = {"currency": "AUD"}
     freight_amount = 0.0
 
-    # ── Scan all rows for meta + freight ──────────────────────────────────────
+    # ── Extract meta from Summary sheet ───────────────────────────────────────
+    if summary_key:
+        df_sum = sheets[summary_key]
+        for _, row in df_sum.iterrows():
+            row_vals = [str(v).strip() for v in row]
+            row_str  = " ".join(row_vals).lower()
+
+            if "quote_number" not in meta:
+                for val in row_vals:
+                    cleaned = val.replace("-", "").replace(" ", "")
+                    if "-" in val and cleaned.isdigit() and 6 <= len(cleaned) <= 12:
+                        meta["quote_number"] = val
+                        break
+
+            if "expiration date" in row_str or "expiry" in row_str:
+                for i, val in enumerate(row_vals):
+                    if ("expiration" in val.lower() or "expiry" in val.lower()):
+                        for v in row_vals[i+1:]:
+                            if "/" in v or (len(v) >= 8 and "-" in v):
+                                meta["expiry"] = v
+                                break
+                        break
+
+            if "prepared by" in row_str:
+                for i, val in enumerate(row_vals):
+                    if "prepared by" in val.lower() and i + 1 < len(row_vals) and row_vals[i+1]:
+                        meta["prepared_by"] = row_vals[i+1]
+                        break
+
+            if "end user" in row_str:
+                for i, val in enumerate(row_vals):
+                    if "end user" in val.lower():
+                        for v in row_vals[i+1:]:
+                            if v:
+                                meta["end_user"] = v
+                                break
+                        break
+
+    # ── Parse General sheet ────────────────────────────────────────────────────
+    df_raw = sheets[general_key]
+
+    # Scan ALL rows first — capture meta fields + freight amount
     for _, row in df_raw.iterrows():
         row_vals = [str(v).strip() for v in row]
         row_str  = " ".join(row_vals).lower()
 
-        # Quote number  (pattern like "1573220-2")
+        # Quote number fallback
         if "quote_number" not in meta:
             for val in row_vals:
                 cleaned = val.replace("-", "").replace(" ", "")
@@ -153,45 +201,30 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                     meta["quote_number"] = val
                     break
 
-        if "expiration date" in row_str or "expiry date" in row_str:
-            for i, val in enumerate(row_vals):
-                if ("expiration" in val.lower() or "expiry" in val.lower()) and i + 1 < len(row_vals):
-                    candidate = row_vals[i + 1]
-                    if "/" in candidate or "-" in candidate:
-                        meta["expiry"] = candidate
-                        break
-
-        if "prepared by" in row_str:
-            for i, val in enumerate(row_vals):
-                if "prepared by" in val.lower() and i + 1 < len(row_vals) and row_vals[i + 1]:
-                    meta["prepared_by"] = row_vals[i + 1]
+        # Expiry fallback
+        if "expiry" not in meta and ("expiration" in row_str or "expiry" in row_str):
+            for val in row_vals:
+                if "/" in val and len(val) >= 8:
+                    meta["expiry"] = val
                     break
 
-        if "end user" in row_str:
-            for i, val in enumerate(row_vals):
-                if "end user" in val.lower() and i + 2 < len(row_vals) and row_vals[i + 2]:
-                    meta["end_user"] = row_vals[i + 2]
-                    break
-
-        # ── Freight: capture amount but DON'T break — keep scanning ──────────
+        # Freight — use extract_amount to handle "237.00 AUD" format
         if "freight charge" in row_str and freight_amount == 0.0:
             for val in row_vals:
-                try:
-                    v = float(val.replace(",", ""))
-                    if v > 0:
-                        freight_amount = v
-                        break
-                except ValueError:
-                    continue
+                amt = extract_amount(val)
+                if amt > 0:
+                    freight_amount = amt
+                    break
 
-    # ── Find header row then read line items ──────────────────────────────────
+    # Find header row (Line No. / Part No.)
     header_idx = None
     for i, row in df_raw.iterrows():
-        row_vals = [str(v).strip().lower() for v in row]
-        if "line no." in row_vals or ("part no." in row_vals and "qty" in row_vals):
+        row_str_lower = " ".join(str(v).strip().lower() for v in row)
+        if "line no." in row_str_lower or ("part no." in row_str_lower and "qty" in row_str_lower):
             header_idx = i
             break
 
+    # Read line items
     items = []
     if header_idx is not None:
         line_counter = 1
@@ -200,7 +233,7 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
             row_vals = [str(v).strip() for v in row]
             joined   = " ".join(row_vals).lower()
 
-            # Stop at summary rows (but we've already captured freight above)
+            # Stop at summary rows
             if any(x in joined for x in ["subtotal", "general total", "freight", "gst:", "total:"]):
                 break
 
@@ -228,7 +261,7 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
             })
             line_counter += 1
 
-    # ── Append freight as a proper line item ──────────────────────────────────
+    # Always append freight as last line item (if found)
     if freight_amount > 0:
         items.append({
             "#":           len(items) + 1,
@@ -354,7 +387,7 @@ def show():
         st.error("No line items found — is this a valid quote?")
         return
 
-    # Badge showing detected distributor
+    # Distributor badge
     badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
     st.markdown(
         f'<span style="background:{badge_color};color:#fff;padding:3px 10px;'
@@ -375,7 +408,7 @@ def show():
         st.write(f"**End User:** {meta.get('end_user', '—')}")
         if distributor == "NEXTGEN":
             st.write(f"**Description:** {meta.get('description', '—')}")
-            st.write(f"**Reseller:** {meta.get('reseller',     '—')}")
+            st.write(f"**Reseller:** {meta.get('reseller', '—')}")
         else:
             st.write(f"**Prepared By:** {meta.get('prepared_by', '—')}")
 
@@ -424,7 +457,6 @@ def show():
             key="margin_pct",
         )
 
-    # Recalculate with updated margin
     margin_pct = st.session_state["margin_pct"]
     df_margin  = apply_margin(items, margin_pct)
 
