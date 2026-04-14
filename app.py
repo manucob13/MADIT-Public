@@ -99,7 +99,7 @@ else:
 
         pagina = st.radio(
             "Menú",
-            ["📋 Quoting"],
+            ["📋 QUOTES"],
             label_visibility="hidden"
         )
 
@@ -110,6 +110,6 @@ else:
             st.rerun()
 
     # ─── Pages ────────────────────────────────────────────────────────────────
-    if pagina == "📋 Quoting":
+    if pagina == "📋 QUOTES":
         from tools.quoting import show
         show()
