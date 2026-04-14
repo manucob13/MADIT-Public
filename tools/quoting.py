@@ -84,12 +84,12 @@ def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
         except (ValueError, TypeError):
             continue
         items.append({
-            "#":            line_no,
-            "SKU":          sku,
-            "Descripción":  description,
-            "Qty":          qty,
-            "Precio Unit.": unit_price,
-            "Total":        total,
+            "#":          line_no,
+            "SKU":        sku,
+            "Description": description,
+            "Qty":        qty,
+            "Unit Cost":  unit_price,
+            "Total Cost": total,
         })
 
     return meta, pd.DataFrame(items)
@@ -102,10 +102,8 @@ def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
 def apply_margin(items: pd.DataFrame, margin_pct: float) -> pd.DataFrame:
     m = margin_pct / 100.0
     df = items.copy()
-    df["PVP Unit."]   = df["Precio Unit."] / (1 - m)
-    df["PVP Total"]   = df["PVP Unit."] * df["Qty"]
-    df["GST (10%)"]   = df["PVP Total"] * 0.10
-    df["Total c/GST"] = df["PVP Total"] + df["GST (10%)"]
+    df["Unit Price"] = df["Unit Cost"] / (1 - m)
+    df["Total"]      = df["Unit Price"] * df["Qty"]
     return df
 
 
@@ -113,7 +111,7 @@ def show():
     st.title("📋 Quoting")
 
     distributor = st.radio(
-        "Distribuidor",
+        "Distributor",
         ["NEXTGEN", "TECHDATA"],
         horizontal=True,
     )
@@ -121,46 +119,46 @@ def show():
     st.divider()
 
     uploaded = st.file_uploader(
-        f"Sube el quote de **{distributor}** (.xlsx)",
+        f"Upload **{distributor}** quote (.xlsx)",
         type=["xlsx"],
         key=f"upload_{distributor}",
     )
 
     if uploaded is None:
-        st.info("Sube un fichero Excel para comenzar.")
+        st.info("Upload an Excel file to get started.")
         return
 
     if distributor == "NEXTGEN":
-        with st.spinner("Procesando quote NEXTGEN..."):
+        with st.spinner("Processing NEXTGEN quote..."):
             meta, items = parse_nextgen(uploaded)
     else:
-        st.warning("Parser de TECHDATA en construcción.")
+        st.warning("TECHDATA parser coming soon. Please upload a NEXTGEN quote.")
         return
 
     if items.empty:
-        st.error("No se encontraron line items. ¿Es un quote NEXTGEN válido?")
+        st.error("No line items found. Is this a valid NEXTGEN quote?")
         return
 
-    # ── Metadata ──────────────────────────────────────────────────────────────
-    st.markdown("### 📄 Información del Quote")
+    # ── Quote info ─────────────────────────────────────────────────────────────
+    st.markdown("### 📄 Quote Information")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Quote #",  meta.get("quote_number", "—"))
-    col2.metric("Expiry",   meta.get("expiry",        "—"))
-    col3.metric("Currency", meta.get("currency",      "AUD"))
+    col1.metric("Quote #",   meta.get("quote_number", "—"))
+    col2.metric("Expiry",    meta.get("expiry",        "—"))
+    col3.metric("Currency",  meta.get("currency",      "AUD"))
 
-    with st.expander("Más detalles"):
-        st.write(f"**Descripción:** {meta.get('description', '—')}")
+    with st.expander("More details"):
+        st.write(f"**Description:** {meta.get('description', '—')}")
         st.write(f"**End User:** {meta.get('end_user', '—')}")
         st.write(f"**Reseller:** {meta.get('reseller', '—')}")
 
     st.divider()
 
-    # ── Coste original ────────────────────────────────────────────────────────
-    st.markdown("### 🛒 Coste Original (Distribuidor)")
+    # ── Cost table ─────────────────────────────────────────────────────────────
+    st.markdown("### 🛒 Distributor Cost")
     st.dataframe(
         items.style.format({
-            "Precio Unit.": "$ {:,.2f}",
-            "Total":        "$ {:,.2f}",
+            "Unit Cost":  "$ {:,.2f}",
+            "Total Cost": "$ {:,.2f}",
         }),
         use_container_width=True,
         hide_index=True,
@@ -168,28 +166,26 @@ def show():
 
     st.divider()
 
-    # ── Margen ────────────────────────────────────────────────────────────────
-    st.markdown("### 💰 Precio de Venta con Margen")
+    # ── Margin ─────────────────────────────────────────────────────────────────
+    st.markdown("### 💰 Sell Price with Margin")
     margin_pct = st.number_input(
-        "Margen (%)",
+        "Margin (%)",
         min_value=0.0,
         max_value=99.0,
         value=10.0,
         step=0.5,
         format="%.1f",
-        help="Fórmula: PVP = Coste / (1 - Margen)",
+        help="Formula: Sell Price = Cost / (1 - Margin)",
     )
 
     df_margin = apply_margin(items, margin_pct)
 
-    # Solo: #, SKU, Descripción, Qty, PVP Unit., PVP Total, GST (10%), Total c/GST
-    display_cols = ["#", "SKU", "Descripción", "Qty", "PVP Unit.", "PVP Total", "GST (10%)", "Total c/GST"]
+    # Table: no GST per line, just unit price and total
+    display_cols = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
     st.dataframe(
         df_margin[display_cols].style.format({
-            "PVP Unit.":   "$ {:,.2f}",
-            "PVP Total":   "$ {:,.2f}",
-            "GST (10%)":   "$ {:,.2f}",
-            "Total c/GST": "$ {:,.2f}",
+            "Unit Price": "$ {:,.2f}",
+            "Total":      "$ {:,.2f}",
         }),
         use_container_width=True,
         hide_index=True,
@@ -197,27 +193,27 @@ def show():
 
     st.divider()
 
-    # ── Resumen ───────────────────────────────────────────────────────────────
-    st.markdown("### 📊 Resumen")
+    # ── Summary ────────────────────────────────────────────────────────────────
+    st.markdown("### 📊 Summary")
 
-    coste_total = items["Total"].sum()
-    pvp_total   = df_margin["PVP Total"].sum()
-    gst_total   = df_margin["GST (10%)"].sum()
-    total_gst   = df_margin["Total c/GST"].sum()
-    diferencia  = pvp_total - coste_total
+    cost_total  = items["Total Cost"].sum()
+    sell_total  = df_margin["Total"].sum()
+    gst_total   = sell_total * 0.10
+    grand_total = sell_total + gst_total
+    difference  = sell_total - cost_total
 
-    resumen = pd.DataFrame([
-        {"Concepto": "Coste total original",                    "Importe AUD": f"$ {coste_total:,.2f}"},
-        {"Concepto": f"Precio total (margen {margin_pct:.1f}%)", "Importe AUD": f"$ {pvp_total:,.2f}"},
-        {"Concepto": "Diferencia",                              "Importe AUD": f"$ {diferencia:,.2f}"},
-        {"Concepto": "GST (10%)",                               "Importe AUD": f"$ {gst_total:,.2f}"},
-        {"Concepto": "Total con GST",                           "Importe AUD": f"$ {total_gst:,.2f}"},
+    summary = pd.DataFrame([
+        {"Item": "Total cost (distributor)",              "Amount AUD": f"$ {cost_total:,.2f}"},
+        {"Item": f"Total sell price ({margin_pct:.1f}% margin)", "Amount AUD": f"$ {sell_total:,.2f}"},
+        {"Item": "Difference",                            "Amount AUD": f"$ {difference:,.2f}"},
+        {"Item": "GST (10%)",                             "Amount AUD": f"$ {gst_total:,.2f}"},
+        {"Item": "Grand Total (inc. GST)",                "Amount AUD": f"$ {grand_total:,.2f}"},
     ])
 
-    st.dataframe(resumen, use_container_width=True, hide_index=True)
+    st.dataframe(summary, use_container_width=True, hide_index=True)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Coste",       f"AUD {coste_total:,.2f}")
-    c2.metric("Precio",      f"AUD {pvp_total:,.2f}")
-    c3.metric("Diferencia",  f"AUD {diferencia:,.2f}")
-    c4.metric("Total c/GST", f"AUD {total_gst:,.2f}")
+    c1.metric("Cost",        f"AUD {cost_total:,.2f}")
+    c2.metric("Sell Price",  f"AUD {sell_total:,.2f}")
+    c3.metric("Difference",  f"AUD {difference:,.2f}")
+    c4.metric("Grand Total", f"AUD {grand_total:,.2f}")
