@@ -275,14 +275,10 @@ def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
 
-# Columns that should be right-aligned (numbers)
 RIGHT_ALIGN_COLS = {"Qty", "Unit Cost", "Total Cost", "Unit Price", "Total"}
 
 
 def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
-    # Build per-column header alignment:
-    # number cols → center in header, right in body
-    # text cols   → left in both
     def header_align(col):
         return "center" if col in RIGHT_ALIGN_COLS else "left"
 
@@ -356,7 +352,7 @@ def render_summary_table(summary: pd.DataFrame) -> str:
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 def show():
-    st.title("📋 Quoting")
+    st.title("📋 QUOTES")
 
     uploaded = st.file_uploader(
         "Upload distributor quote (.xlsx)",
@@ -406,6 +402,11 @@ def show():
 
     st.divider()
 
+    # ── Margin input ───────────────────────────────────────────────────────────
+    # Initialise only once so the widget always has a concrete starting value
+    if "margin_pct" not in st.session_state:
+        st.session_state["margin_pct"] = 10.0
+
     # ── Distributor cost table ─────────────────────────────────────────────────
     st.markdown("### 🛒 Distributor Cost")
     st.markdown(
@@ -418,12 +419,8 @@ def show():
     # ── Sell price table ───────────────────────────────────────────────────────
     st.markdown("### 💰 Sell Price with Margin")
 
-    if "margin_pct" not in st.session_state:
-        st.session_state["margin_pct"] = 10.0
-
-    margin_pct = st.session_state["margin_pct"]
-    df_margin  = apply_margin(items, margin_pct)
-    sell_cols  = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
+    df_margin = apply_margin(items, st.session_state["margin_pct"])
+    sell_cols = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
     st.markdown(
         render_html_table(
             add_totals_sell(df_margin[sell_cols].copy()),
@@ -443,14 +440,15 @@ def show():
             "Margin (%)",
             min_value=0.0,
             max_value=99.0,
+            value=st.session_state["margin_pct"],
             step=0.5,
             format="%.1f",
             help="Formula: Sell Price = Cost / (1 − Margin)",
             key="margin_pct",
         )
 
-    margin_pct = st.session_state["margin_pct"]
-    df_margin  = apply_margin(items, margin_pct)
+    margin_pct   = st.session_state["margin_pct"]
+    df_margin    = apply_margin(items, margin_pct)
 
     cost_total   = items["Total Cost"].sum()
     cost_gst     = cost_total * 0.10
