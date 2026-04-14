@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import openpyxl
 
 
 def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
