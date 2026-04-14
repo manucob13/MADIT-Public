@@ -114,6 +114,10 @@ def fmt(val: float) -> str:
 def show():
     st.title("📋 Quoting")
 
+    # ── Initialise shared margin in session state ──────────────────────────────
+    if "margin_pct" not in st.session_state:
+        st.session_state["margin_pct"] = 10.0
+
     distributor = st.radio(
         "Distributor",
         ["NEXTGEN", "TECHDATA"],
@@ -157,7 +161,7 @@ def show():
 
     st.divider()
 
-    # ── Cost table ─────────────────────────────────────────────────────────────
+    # ── Distributor cost ───────────────────────────────────────────────────────
     st.markdown("### 🛒 Distributor Cost")
     st.dataframe(
         items.style.format({
@@ -170,23 +174,22 @@ def show():
 
     st.divider()
 
-    # ── Margin + sell price table ───────────────────────────────────────────────
+    # ── Sell price — margin input #1 ───────────────────────────────────────────
     st.markdown("### 💰 Sell Price with Margin")
-    margin_pct = st.number_input(
+    st.number_input(
         "Margin (%)",
         min_value=0.0,
         max_value=99.0,
-        value=10.0,
         step=0.5,
         format="%.1f",
         help="Formula: Sell Price = Cost / (1 - Margin)",
+        key="margin_pct",   # ← linked directly to session_state
     )
 
-    df_margin = apply_margin(items, margin_pct)
+    df_margin = apply_margin(items, st.session_state["margin_pct"])
 
-    display_cols = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
     st.dataframe(
-        df_margin[display_cols].style.format({
+        df_margin[["#", "SKU", "Description", "Qty", "Unit Price", "Total"]].style.format({
             "Unit Price": "$ {:,.2f}",
             "Total":      "$ {:,.2f}",
         }),
@@ -196,8 +199,28 @@ def show():
 
     st.divider()
 
-    # ── Summary ─────────────────────────────────────────────────────────────────
+    # ── Summary — margin input #2 (synced) ────────────────────────────────────
     st.markdown("### 📊 Summary")
+
+    _, col_input, _ = st.columns([1, 2, 1])
+    with col_input:
+        st.number_input(
+            "Margin (%)",
+            min_value=0.0,
+            max_value=99.0,
+            step=0.5,
+            format="%.1f",
+            help="Formula: Sell Price = Cost / (1 - Margin)",
+            key="margin_pct_summary",   # different key — uses on_change to sync
+            value=st.session_state["margin_pct"],
+            on_change=lambda: st.session_state.update(
+                {"margin_pct": st.session_state["margin_pct_summary"]}
+            ),
+        )
+
+    # Recalculate with the latest margin (whichever input was changed last)
+    margin = st.session_state["margin_pct"]
+    df_margin = apply_margin(items, margin)
 
     cost_total   = items["Total Cost"].sum()
     cost_gst     = cost_total * 0.10
@@ -212,27 +235,11 @@ def show():
     diff_inc_gst = sell_inc_gst - cost_inc_gst
 
     summary = pd.DataFrame([
-        {
-            "":              "Subtotal (ex. GST)",
-            "Cost":          fmt(cost_total),
-            "Sell Price":    fmt(sell_total),
-            "Difference":    fmt(diff_ex_gst),
-        },
-        {
-            "":              "GST (10%)",
-            "Cost":          fmt(cost_gst),
-            "Sell Price":    fmt(sell_gst),
-            "Difference":    fmt(diff_gst),
-        },
-        {
-            "":              "Total (inc. GST)",
-            "Cost":          fmt(cost_inc_gst),
-            "Sell Price":    fmt(sell_inc_gst),
-            "Difference":    fmt(diff_inc_gst),
-        },
+        {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),   "Difference": fmt(diff_ex_gst)},
+        {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),     "Difference": fmt(diff_gst)},
+        {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst), "Difference": fmt(diff_inc_gst)},
     ])
 
-    # Centre the summary table using columns
     _, col_mid, _ = st.columns([1, 2, 1])
     with col_mid:
         st.dataframe(summary, use_container_width=True, hide_index=True)
