@@ -114,6 +114,76 @@ def fmt(val) -> str:
         return str(val) if val != "" else ""
 
 
+def render_html_table(df: pd.DataFrame, money_cols: list, total_col: str) -> str:
+    """Render a clean HTML table with small font, bold total row."""
+    styles = """
+    <style>
+      .madit-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+      }
+      .madit-table thead tr {
+        background-color: #1a2a3a;
+        color: #ffffff;
+      }
+      .madit-table thead th {
+        padding: 8px 12px;
+        text-align: left;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+      }
+      .madit-table tbody tr {
+        border-bottom: 1px solid #e8e8e8;
+      }
+      .madit-table tbody tr:nth-child(even) {
+        background-color: #f7f9fb;
+      }
+      .madit-table tbody tr:hover {
+        background-color: #eef3f8;
+      }
+      .madit-table tbody td {
+        padding: 6px 12px;
+        color: #2c3e50;
+        vertical-align: top;
+      }
+      .madit-table .money {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .madit-table .total-row td {
+        font-weight: 700;
+        background-color: #e8f0f7 !important;
+        border-top: 2px solid #1a2a3a;
+        color: #0f1923;
+      }
+    </style>
+    """
+
+    header = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in df.columns) + "</tr></thead>"
+
+    rows_html = ""
+    for _, row in df.iterrows():
+        is_total = str(row.get("Description", row.get("", ""))).strip().upper() == "TOTAL"
+        row_class = ' class="total-row"' if is_total else ""
+        cells = ""
+        for col in df.columns:
+            val = row[col]
+            if col in money_cols:
+                display = fmt(val)
+                cells += f'<td class="money">{display}</td>'
+            else:
+                cells += f"<td>{val}</td>"
+        rows_html += f"<tr{row_class}>{cells}</tr>"
+
+    tbody = f"<tbody>{rows_html}</tbody>"
+    table = f'<table class="madit-table">{header}{tbody}</table>'
+    return styles + table
+
+
 def add_totals_cost(df: pd.DataFrame) -> pd.DataFrame:
     totals = {
         "#": "", "SKU": "", "Description": "TOTAL",
@@ -130,13 +200,51 @@ def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
 
-def render_table(df: pd.DataFrame, fmt_cols: list):
-    """Render full-height table with formatted columns, no internal scroll."""
-    display = df.copy()
-    for col in fmt_cols:
-        if col in display.columns:
-            display[col] = display[col].apply(fmt)
-    st.table(display)
+def render_summary_table(summary: pd.DataFrame) -> str:
+    styles = """
+    <style>
+      .summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+      }
+      .summary-table thead tr {
+        background-color: #1a2a3a;
+        color: #ffffff;
+      }
+      .summary-table thead th {
+        padding: 9px 16px;
+        text-align: left;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+      }
+      .summary-table tbody tr {
+        border-bottom: 1px solid #e0e0e0;
+      }
+      .summary-table tbody tr:last-child {
+        font-weight: 700;
+        background-color: #e8f0f7;
+        border-top: 2px solid #1a2a3a;
+      }
+      .summary-table tbody td {
+        padding: 8px 16px;
+        color: #2c3e50;
+        font-variant-numeric: tabular-nums;
+      }
+      .summary-table tbody td:not(:first-child) {
+        text-align: right;
+        white-space: nowrap;
+      }
+    </style>
+    """
+    header = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in summary.columns) + "</tr></thead>"
+    rows_html = ""
+    for _, row in summary.iterrows():
+        cells = "".join(f"<td>{row[col]}</td>" for col in summary.columns)
+        rows_html += f"<tr>{cells}</tr>"
+    table = f'<table class="summary-table">{header}<tbody>{rows_html}</tbody></table>'
+    return styles + table
 
 
 def show():
@@ -187,7 +295,10 @@ def show():
 
     # ── Distributor cost table ─────────────────────────────────────────────────
     st.markdown("### 🛒 Distributor Cost")
-    render_table(add_totals_cost(items), ["Unit Cost", "Total Cost"])
+    st.markdown(
+        render_html_table(add_totals_cost(items), ["Unit Cost", "Total Cost"], "Total Cost"),
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
@@ -200,7 +311,10 @@ def show():
     margin_pct = st.session_state["margin_pct"]
     df_margin  = apply_margin(items, margin_pct)
     sell_cols  = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
-    render_table(add_totals_sell(df_margin[sell_cols].copy()), ["Unit Price", "Total"])
+    st.markdown(
+        render_html_table(add_totals_sell(df_margin[sell_cols].copy()), ["Unit Price", "Total"], "Total"),
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
@@ -225,7 +339,6 @@ def show():
     cost_total   = items["Total Cost"].sum()
     cost_gst     = cost_total * 0.10
     cost_inc_gst = cost_total + cost_gst
-
     sell_total   = df_margin["Total"].sum()
     sell_gst     = sell_total * 0.10
     sell_inc_gst = sell_total + sell_gst
@@ -238,4 +351,4 @@ def show():
 
     _, col_mid, _ = st.columns([1, 2, 1])
     with col_mid:
-        st.table(summary)
+        st.markdown(render_summary_table(summary), unsafe_allow_html=True)
