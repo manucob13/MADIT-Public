@@ -84,12 +84,12 @@ def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
         except (ValueError, TypeError):
             continue
         items.append({
-            "#":          line_no,
-            "SKU":        sku,
+            "#":           line_no,
+            "SKU":         sku,
             "Description": description,
-            "Qty":        qty,
-            "Unit Cost":  unit_price,
-            "Total Cost": total,
+            "Qty":         qty,
+            "Unit Cost":   unit_price,
+            "Total Cost":  total,
         })
 
     return meta, pd.DataFrame(items)
@@ -105,6 +105,10 @@ def apply_margin(items: pd.DataFrame, margin_pct: float) -> pd.DataFrame:
     df["Unit Price"] = df["Unit Cost"] / (1 - m)
     df["Total"]      = df["Unit Price"] * df["Qty"]
     return df
+
+
+def fmt(val: float) -> str:
+    return f"$ {val:,.2f}"
 
 
 def show():
@@ -142,9 +146,9 @@ def show():
     # ── Quote info ─────────────────────────────────────────────────────────────
     st.markdown("### 📄 Quote Information")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Quote #",   meta.get("quote_number", "—"))
-    col2.metric("Expiry",    meta.get("expiry",        "—"))
-    col3.metric("Currency",  meta.get("currency",      "AUD"))
+    col1.metric("Quote #",  meta.get("quote_number", "—"))
+    col2.metric("Expiry",   meta.get("expiry",        "—"))
+    col3.metric("Currency", meta.get("currency",      "AUD"))
 
     with st.expander("More details"):
         st.write(f"**Description:** {meta.get('description', '—')}")
@@ -166,7 +170,7 @@ def show():
 
     st.divider()
 
-    # ── Margin ─────────────────────────────────────────────────────────────────
+    # ── Margin + sell price table ───────────────────────────────────────────────
     st.markdown("### 💰 Sell Price with Margin")
     margin_pct = st.number_input(
         "Margin (%)",
@@ -180,7 +184,6 @@ def show():
 
     df_margin = apply_margin(items, margin_pct)
 
-    # Table: no GST per line, just unit price and total
     display_cols = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
     st.dataframe(
         df_margin[display_cols].style.format({
@@ -193,27 +196,43 @@ def show():
 
     st.divider()
 
-    # ── Summary ────────────────────────────────────────────────────────────────
+    # ── Summary ─────────────────────────────────────────────────────────────────
     st.markdown("### 📊 Summary")
 
-    cost_total  = items["Total Cost"].sum()
-    sell_total  = df_margin["Total"].sum()
-    gst_total   = sell_total * 0.10
-    grand_total = sell_total + gst_total
-    difference  = sell_total - cost_total
+    cost_total   = items["Total Cost"].sum()
+    cost_gst     = cost_total * 0.10
+    cost_inc_gst = cost_total + cost_gst
+
+    sell_total   = df_margin["Total"].sum()
+    sell_gst     = sell_total * 0.10
+    sell_inc_gst = sell_total + sell_gst
+
+    diff_ex_gst  = sell_total   - cost_total
+    diff_gst     = sell_gst     - cost_gst
+    diff_inc_gst = sell_inc_gst - cost_inc_gst
 
     summary = pd.DataFrame([
-        {"Item": "Total cost (distributor)",              "Amount AUD": f"$ {cost_total:,.2f}"},
-        {"Item": f"Total sell price ({margin_pct:.1f}% margin)", "Amount AUD": f"$ {sell_total:,.2f}"},
-        {"Item": "Difference",                            "Amount AUD": f"$ {difference:,.2f}"},
-        {"Item": "GST (10%)",                             "Amount AUD": f"$ {gst_total:,.2f}"},
-        {"Item": "Grand Total (inc. GST)",                "Amount AUD": f"$ {grand_total:,.2f}"},
+        {
+            "":              "Subtotal (ex. GST)",
+            "Cost":          fmt(cost_total),
+            "Sell Price":    fmt(sell_total),
+            "Difference":    fmt(diff_ex_gst),
+        },
+        {
+            "":              "GST (10%)",
+            "Cost":          fmt(cost_gst),
+            "Sell Price":    fmt(sell_gst),
+            "Difference":    fmt(diff_gst),
+        },
+        {
+            "":              "Total (inc. GST)",
+            "Cost":          fmt(cost_inc_gst),
+            "Sell Price":    fmt(sell_inc_gst),
+            "Difference":    fmt(diff_inc_gst),
+        },
     ])
 
-    st.dataframe(summary, use_container_width=True, hide_index=True)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Cost",        f"AUD {cost_total:,.2f}")
-    c2.metric("Sell Price",  f"AUD {sell_total:,.2f}")
-    c3.metric("Difference",  f"AUD {difference:,.2f}")
-    c4.metric("Grand Total", f"AUD {grand_total:,.2f}")
+    # Centre the summary table using columns
+    _, col_mid, _ = st.columns([1, 2, 1])
+    with col_mid:
+        st.dataframe(summary, use_container_width=True, hide_index=True)
