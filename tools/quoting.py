@@ -107,8 +107,11 @@ def apply_margin(items: pd.DataFrame, margin_pct: float) -> pd.DataFrame:
     return df
 
 
-def fmt(val: float) -> str:
-    return f"$ {val:,.2f}"
+def fmt(val) -> str:
+    try:
+        return f"$ {float(val):,.2f}"
+    except (ValueError, TypeError):
+        return str(val) if val != "" else ""
 
 
 def add_totals_cost(df: pd.DataFrame) -> pd.DataFrame:
@@ -125,6 +128,15 @@ def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
         "Qty": "", "Unit Price": "", "Total": df["Total"].sum(),
     }
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
+
+
+def render_table(df: pd.DataFrame, fmt_cols: list):
+    """Render full-height table with formatted columns, no internal scroll."""
+    display = df.copy()
+    for col in fmt_cols:
+        if col in display.columns:
+            display[col] = display[col].apply(fmt)
+    st.table(display)
 
 
 def show():
@@ -175,22 +187,11 @@ def show():
 
     # ── Distributor cost table ─────────────────────────────────────────────────
     st.markdown("### 🛒 Distributor Cost")
-    cost_with_total = add_totals_cost(items)
-    st.dataframe(
-        cost_with_total.style.format({
-            "Unit Cost":  lambda v: fmt(v) if isinstance(v, float) else v,
-            "Total Cost": lambda v: fmt(v) if isinstance(v, float) else v,
-        }).apply(lambda row: [
-            "font-weight: bold; border-top: 2px solid #ccc;" if row["Description"] == "TOTAL" else ""
-            for _ in row
-        ], axis=1),
-        use_container_width=True,
-        hide_index=True,
-    )
+    render_table(add_totals_cost(items), ["Unit Cost", "Total Cost"])
 
     st.divider()
 
-    # ── Sell price table — reads margin from session_state ────────────────────
+    # ── Sell price table ───────────────────────────────────────────────────────
     st.markdown("### 💰 Sell Price with Margin")
 
     if "margin_pct" not in st.session_state:
@@ -199,23 +200,11 @@ def show():
     margin_pct = st.session_state["margin_pct"]
     df_margin  = apply_margin(items, margin_pct)
     sell_cols  = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
-    sell_with_total = add_totals_sell(df_margin[sell_cols].copy())
-
-    st.dataframe(
-        sell_with_total.style.format({
-            "Unit Price": lambda v: fmt(v) if isinstance(v, float) else v,
-            "Total":      lambda v: fmt(v) if isinstance(v, float) else v,
-        }).apply(lambda row: [
-            "font-weight: bold; border-top: 2px solid #ccc;" if row["Description"] == "TOTAL" else ""
-            for _ in row
-        ], axis=1),
-        use_container_width=True,
-        hide_index=True,
-    )
+    render_table(add_totals_sell(df_margin[sell_cols].copy()), ["Unit Price", "Total"])
 
     st.divider()
 
-    # ── Summary — only margin input here ──────────────────────────────────────
+    # ── Summary ────────────────────────────────────────────────────────────────
     st.markdown("### 📊 Summary")
 
     _, col_input, _ = st.columns([1, 1, 1])
@@ -230,7 +219,6 @@ def show():
             key="margin_pct",
         )
 
-    # Recalculate with updated margin
     margin_pct = st.session_state["margin_pct"]
     df_margin  = apply_margin(items, margin_pct)
 
@@ -242,16 +230,12 @@ def show():
     sell_gst     = sell_total * 0.10
     sell_inc_gst = sell_total + sell_gst
 
-    diff_ex_gst  = sell_total   - cost_total
-    diff_gst     = sell_gst     - cost_gst
-    diff_inc_gst = sell_inc_gst - cost_inc_gst
-
     summary = pd.DataFrame([
-        {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),   "Difference": fmt(diff_ex_gst)},
-        {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),     "Difference": fmt(diff_gst)},
-        {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst), "Difference": fmt(diff_inc_gst)},
+        {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),   "Difference": fmt(sell_total   - cost_total)},
+        {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),     "Difference": fmt(sell_gst     - cost_gst)},
+        {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst), "Difference": fmt(sell_inc_gst - cost_inc_gst)},
     ])
 
     _, col_mid, _ = st.columns([1, 2, 1])
     with col_mid:
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.table(summary)
