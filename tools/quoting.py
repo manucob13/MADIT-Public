@@ -112,27 +112,17 @@ def fmt(val: float) -> str:
 
 
 def add_totals_cost(df: pd.DataFrame) -> pd.DataFrame:
-    """Append a totals row to the cost table."""
     totals = {
-        "#":           "",
-        "SKU":         "",
-        "Description": "TOTAL",
-        "Qty":         "",
-        "Unit Cost":   "",
-        "Total Cost":  df["Total Cost"].sum(),
+        "#": "", "SKU": "", "Description": "TOTAL",
+        "Qty": "", "Unit Cost": "", "Total Cost": df["Total Cost"].sum(),
     }
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
 
 def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
-    """Append a totals row to the sell price table."""
     totals = {
-        "#":           "",
-        "SKU":         "",
-        "Description": "TOTAL",
-        "Qty":         "",
-        "Unit Price":  "",
-        "Total":       df["Total"].sum(),
+        "#": "", "SKU": "", "Description": "TOTAL",
+        "Qty": "", "Unit Price": "", "Total": df["Total"].sum(),
     }
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
@@ -183,64 +173,66 @@ def show():
 
     st.divider()
 
-    # ── SINGLE margin input — controls everything ──────────────────────────────
-    _, col_m, _ = st.columns([1, 1, 1])
-    with col_m:
-        margin_pct = st.number_input(
-            "💹 Margin (%)",
-            min_value=0.0,
-            max_value=99.0,
-            value=10.0,
-            step=0.5,
-            format="%.1f",
-            help="Formula: Sell Price = Cost / (1 - Margin). Updates all tables.",
-            key="margin_pct",
-        )
-
-    st.divider()
-
     # ── Distributor cost table ─────────────────────────────────────────────────
     st.markdown("### 🛒 Distributor Cost")
     cost_with_total = add_totals_cost(items)
     st.dataframe(
-        cost_with_total.style
-            .format({
-                "Unit Cost":  lambda v: fmt(v) if isinstance(v, float) else v,
-                "Total Cost": lambda v: fmt(v) if isinstance(v, float) else v,
-            })
-            .apply(lambda row: [
-                "font-weight: bold; border-top: 2px solid #ccc;" if row["Description"] == "TOTAL"
-                else "" for _ in row
-            ], axis=1),
+        cost_with_total.style.format({
+            "Unit Cost":  lambda v: fmt(v) if isinstance(v, float) else v,
+            "Total Cost": lambda v: fmt(v) if isinstance(v, float) else v,
+        }).apply(lambda row: [
+            "font-weight: bold; border-top: 2px solid #ccc;" if row["Description"] == "TOTAL" else ""
+            for _ in row
+        ], axis=1),
         use_container_width=True,
         hide_index=True,
     )
 
     st.divider()
 
-    # ── Sell price table ───────────────────────────────────────────────────────
+    # ── Sell price table — reads margin from session_state ────────────────────
     st.markdown("### 💰 Sell Price with Margin")
-    df_margin = apply_margin(items, margin_pct)
+
+    if "margin_pct" not in st.session_state:
+        st.session_state["margin_pct"] = 10.0
+
+    margin_pct = st.session_state["margin_pct"]
+    df_margin  = apply_margin(items, margin_pct)
     sell_cols  = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
     sell_with_total = add_totals_sell(df_margin[sell_cols].copy())
+
     st.dataframe(
-        sell_with_total.style
-            .format({
-                "Unit Price": lambda v: fmt(v) if isinstance(v, float) else v,
-                "Total":      lambda v: fmt(v) if isinstance(v, float) else v,
-            })
-            .apply(lambda row: [
-                "font-weight: bold; border-top: 2px solid #ccc;" if row["Description"] == "TOTAL"
-                else "" for _ in row
-            ], axis=1),
+        sell_with_total.style.format({
+            "Unit Price": lambda v: fmt(v) if isinstance(v, float) else v,
+            "Total":      lambda v: fmt(v) if isinstance(v, float) else v,
+        }).apply(lambda row: [
+            "font-weight: bold; border-top: 2px solid #ccc;" if row["Description"] == "TOTAL" else ""
+            for _ in row
+        ], axis=1),
         use_container_width=True,
         hide_index=True,
     )
 
     st.divider()
 
-    # ── Summary ────────────────────────────────────────────────────────────────
+    # ── Summary — only margin input here ──────────────────────────────────────
     st.markdown("### 📊 Summary")
+
+    _, col_input, _ = st.columns([1, 1, 1])
+    with col_input:
+        st.number_input(
+            "Margin (%)",
+            min_value=0.0,
+            max_value=99.0,
+            step=0.5,
+            format="%.1f",
+            help="Formula: Sell Price = Cost / (1 - Margin)",
+            key="margin_pct",
+        )
+
+    # Recalculate with updated margin
+    margin_pct = st.session_state["margin_pct"]
+    df_margin  = apply_margin(items, margin_pct)
 
     cost_total   = items["Total Cost"].sum()
     cost_gst     = cost_total * 0.10
