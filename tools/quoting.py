@@ -5,12 +5,11 @@ import xml.etree.ElementTree as ET
 import io
 
 
-def read_xlsx_native(file) -> tuple[pd.DataFrame, dict]:
-    """Returns (sheets_dict, namelist) — reads all sheets by name."""
-    content = file.read()
+# ── XLSX reader ────────────────────────────────────────────────────────────────
+def read_xlsx_native(file) -> dict:
+    content = file.read() if hasattr(file, "read") else open(file, "rb").read()
     z = zipfile.ZipFile(io.BytesIO(content))
 
-    # Shared strings
     shared_strings = []
     if "xl/sharedStrings.xml" in z.namelist():
         tree = ET.parse(z.open("xl/sharedStrings.xml"))
@@ -20,19 +19,18 @@ def read_xlsx_native(file) -> tuple[pd.DataFrame, dict]:
             texts = si.findall(f".//{ns}t")
             shared_strings.append("".join(t.text or "" for t in texts))
 
-    # Sheet name → file mapping from workbook
     sheet_map = {}
     wb_tree = ET.parse(z.open("xl/workbook.xml"))
     wb_root = wb_tree.getroot()
     wb_ns   = wb_root.tag.split("}")[0] + "}" if "}" in wb_root.tag else ""
-    rels     = {}
+    rels = {}
     if "xl/_rels/workbook.xml.rels" in z.namelist():
         r_tree = ET.parse(z.open("xl/_rels/workbook.xml.rels"))
         for rel in r_tree.getroot():
             rels[rel.get("Id")] = rel.get("Target")
     for sheet in wb_root.findall(f".//{wb_ns}sheet"):
-        name  = sheet.get("name")
-        r_id  = sheet.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+        name   = sheet.get("name")
+        r_id   = sheet.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         target = rels.get(r_id, "")
         path   = f"xl/{target}" if not target.startswith("xl/") else target
         sheet_map[name] = path
@@ -65,15 +63,33 @@ def read_xlsx_native(file) -> tuple[pd.DataFrame, dict]:
         data = [[r.get(c, "") for c in range(max_col + 1)] for r in rows]
         return pd.DataFrame(data)
 
-    sheets = {name: parse_sheet(path) for name, path in sheet_map.items()}
-    return sheets
+    return {name: parse_sheet(path) for name, path in sheet_map.items()}
+
+
+# ── Auto-detect distributor ────────────────────────────────────────────────────
+def detect_distributor(sheets: dict) -> str:
+    """Returns 'TECHDATA', 'NEXTGEN', or 'UNKNOWN'."""
+    all_text = ""
+    for df in sheets.values():
+        for _, row in df.iterrows():
+            all_text += " ".join(str(v) for v in row).lower() + " "
+        if len(all_text) > 5000:
+            break
+
+    if "tech data" in all_text or "techdata" in all_text or "1300 36 25 25" in all_text:
+        return "TECHDATA"
+    if "nextgen" in all_text or "next gen" in all_text:
+        return "NEXTGEN"
+    # Fallback: check sheet names
+    sheet_names = " ".join(sheets.keys()).lower()
+    if "general" in sheet_names:
+        return "TECHDATA"
+    return "NEXTGEN"
 
 
 # ── NEXTGEN parser ─────────────────────────────────────────────────────────────
-def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
-    sheets = read_xlsx_native(file)
+def parse_nextgen(sheets: dict) -> tuple[dict, pd.DataFrame]:
     df_raw = next(iter(sheets.values()))
-
     meta = {}
     try:
         row1 = df_raw.iloc[1]
@@ -113,51 +129,52 @@ def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
 
 
 # ── TECHDATA parser ────────────────────────────────────────────────────────────
-def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
-    sheets = read_xlsx_native(file)
-
-    # Find "General" sheet (case-insensitive)
+def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
     general_key = next(
         (k for k in sheets if k.strip().lower() == "general"), None
     )
     if general_key is None:
-        return {}, pd.DataFrame()
+        general_key = next(iter(sheets))
 
     df_raw = sheets[general_key]
-
-    # ── Meta ──────────────────────────────────────────────────────────────────
     meta = {"currency": "AUD"}
     freight_amount = 0.0
 
+    # ── Scan all rows for meta + freight ──────────────────────────────────────
     for _, row in df_raw.iterrows():
         row_vals = [str(v).strip() for v in row]
         row_str  = " ".join(row_vals).lower()
 
-        # Quote number — look for the quote number row (e.g. "1573220-2")
-        for val in row_vals:
-            if "-" in val and val.replace("-", "").replace(" ", "").isdigit() and len(val) > 4:
-                if "quote_number" not in meta:
-                    meta["quote_number"] = val
-
-        if "expiration date" in row_str or "expiry" in row_str:
+        # Quote number  (pattern like "1573220-2")
+        if "quote_number" not in meta:
             for val in row_vals:
-                if "/" in val and len(val) >= 8:
-                    meta["expiry"] = val
+                cleaned = val.replace("-", "").replace(" ", "")
+                if "-" in val and cleaned.isdigit() and 6 <= len(cleaned) <= 12:
+                    meta["quote_number"] = val
                     break
+
+        if "expiration date" in row_str or "expiry date" in row_str:
+            for i, val in enumerate(row_vals):
+                if ("expiration" in val.lower() or "expiry" in val.lower()) and i + 1 < len(row_vals):
+                    candidate = row_vals[i + 1]
+                    if "/" in candidate or "-" in candidate:
+                        meta["expiry"] = candidate
+                        break
 
         if "prepared by" in row_str:
             for i, val in enumerate(row_vals):
-                if "prepared by" in val.lower() and i + 1 < len(row_vals) and row_vals[i+1]:
-                    meta["prepared_by"] = row_vals[i+1]
+                if "prepared by" in val.lower() and i + 1 < len(row_vals) and row_vals[i + 1]:
+                    meta["prepared_by"] = row_vals[i + 1]
                     break
 
         if "end user" in row_str:
             for i, val in enumerate(row_vals):
-                if "end user" in val.lower() and i + 1 < len(row_vals) and row_vals[i+1]:
-                    meta["end_user"] = row_vals[i+1]
+                if "end user" in val.lower() and i + 2 < len(row_vals) and row_vals[i + 2]:
+                    meta["end_user"] = row_vals[i + 2]
                     break
 
-        if "freight charge" in row_str:
+        # ── Freight: capture amount but DON'T break — keep scanning ──────────
+        if "freight charge" in row_str and freight_amount == 0.0:
             for val in row_vals:
                 try:
                     v = float(val.replace(",", ""))
@@ -167,57 +184,54 @@ def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
                 except ValueError:
                     continue
 
-    # ── Line items ────────────────────────────────────────────────────────────
-    # Header row has: Line No. | Part No. | Qty | Long Description | Unit List | Ext. List | Discount % | Unit Price | Ext. Price
+    # ── Find header row then read line items ──────────────────────────────────
     header_idx = None
     for i, row in df_raw.iterrows():
         row_vals = [str(v).strip().lower() for v in row]
-        if "line no." in row_vals or "part no." in row_vals:
+        if "line no." in row_vals or ("part no." in row_vals and "qty" in row_vals):
             header_idx = i
             break
 
-    if header_idx is None:
-        return meta, pd.DataFrame()
-
     items = []
-    line_counter = 1
-    for i in range(header_idx + 1, len(df_raw)):
-        row = df_raw.iloc[i]
-        row_vals = [str(v).strip() for v in row]
+    if header_idx is not None:
+        line_counter = 1
+        for i in range(header_idx + 1, len(df_raw)):
+            row      = df_raw.iloc[i]
+            row_vals = [str(v).strip() for v in row]
+            joined   = " ".join(row_vals).lower()
 
-        # Stop at subtotal/total rows
-        joined = " ".join(row_vals).lower()
-        if any(x in joined for x in ["subtotal", "general total", "freight", "gst:", "total:"]):
-            break
+            # Stop at summary rows (but we've already captured freight above)
+            if any(x in joined for x in ["subtotal", "general total", "freight", "gst:", "total:"]):
+                break
 
-        try:
-            line_no = int(float(row_vals[0]))
-        except (ValueError, TypeError):
-            continue
+            try:
+                int(float(row_vals[0]))  # must start with a line number
+            except (ValueError, TypeError):
+                continue
 
-        try:
-            sku         = row_vals[1]
-            qty         = int(float(row_vals[2]))
-            description = row_vals[3]
-            unit_price  = float(row_vals[7].replace(",", ""))
-            total       = float(row_vals[8].replace(",", ""))
-        except (ValueError, TypeError, IndexError):
-            continue
+            try:
+                sku         = row_vals[1]
+                qty         = int(float(row_vals[2]))
+                description = row_vals[3]
+                unit_price  = float(row_vals[7].replace(",", ""))
+                total       = float(row_vals[8].replace(",", ""))
+            except (ValueError, TypeError, IndexError):
+                continue
 
-        items.append({
-            "#":           line_no,
-            "SKU":         sku,
-            "Description": description,
-            "Qty":         qty,
-            "Unit Cost":   unit_price,
-            "Total Cost":  total,
-        })
-        line_counter += 1
+            items.append({
+                "#":           line_counter,
+                "SKU":         sku,
+                "Description": description,
+                "Qty":         qty,
+                "Unit Cost":   unit_price,
+                "Total Cost":  total,
+            })
+            line_counter += 1
 
-    # Append freight as a line item
+    # ── Append freight as a proper line item ──────────────────────────────────
     if freight_amount > 0:
         items.append({
-            "#":           line_counter,
+            "#":           len(items) + 1,
             "SKU":         "FREIGHT",
             "Description": "Freight Charge",
             "Qty":         1,
@@ -230,7 +244,7 @@ def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 def apply_margin(items: pd.DataFrame, margin_pct: float) -> pd.DataFrame:
-    m = margin_pct / 100.0
+    m  = margin_pct / 100.0
     df = items.copy()
     df["Unit Price"] = df["Unit Cost"] / (1 - m)
     df["Total"]      = df["Unit Price"] * df["Qty"]
@@ -245,72 +259,38 @@ def fmt(val) -> str:
 
 
 def add_totals_cost(df: pd.DataFrame) -> pd.DataFrame:
-    totals = {
-        "#": "", "SKU": "", "Description": "TOTAL",
-        "Qty": "", "Unit Cost": "", "Total Cost": df["Total Cost"].sum(),
-    }
+    totals = {"#": "", "SKU": "", "Description": "TOTAL",
+               "Qty": "", "Unit Cost": "", "Total Cost": df["Total Cost"].sum()}
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
 
 def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
-    totals = {
-        "#": "", "SKU": "", "Description": "TOTAL",
-        "Qty": "", "Unit Price": "", "Total": df["Total"].sum(),
-    }
+    totals = {"#": "", "SKU": "", "Description": "TOTAL",
+               "Qty": "", "Unit Price": "", "Total": df["Total"].sum()}
     return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
 
 def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
     styles = """
     <style>
-      .madit-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.78rem;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-      }
-      .madit-table thead tr {
-        background-color: #1a2a3a;
-        color: #ffffff;
-      }
-      .madit-table thead th {
-        padding: 8px 12px;
-        text-align: left;
-        font-weight: 600;
-        letter-spacing: 0.03em;
-        white-space: nowrap;
-      }
-      .madit-table tbody tr {
-        border-bottom: 1px solid #e8e8e8;
-      }
-      .madit-table tbody tr:nth-child(even) {
-        background-color: #f7f9fb;
-      }
-      .madit-table tbody tr:hover {
-        background-color: #eef3f8;
-      }
-      .madit-table tbody td {
-        padding: 6px 12px;
-        color: #2c3e50;
-        vertical-align: top;
-      }
-      .madit-table .money {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-      }
-      .madit-table .total-row td {
-        font-weight: 700;
-        background-color: #e8f0f7 !important;
-        border-top: 2px solid #1a2a3a;
-        color: #0f1923;
-      }
+      .madit-table { width:100%; border-collapse:collapse; font-size:0.78rem;
+                     font-family:'Inter','Segoe UI',sans-serif; }
+      .madit-table thead tr { background-color:#1a2a3a; color:#fff; }
+      .madit-table thead th { padding:8px 12px; text-align:left; font-weight:600;
+                               letter-spacing:.03em; white-space:nowrap; }
+      .madit-table tbody tr { border-bottom:1px solid #e8e8e8; }
+      .madit-table tbody tr:nth-child(even) { background:#f7f9fb; }
+      .madit-table tbody tr:hover { background:#eef3f8; }
+      .madit-table tbody td { padding:6px 12px; color:#2c3e50; vertical-align:top; }
+      .madit-table .money { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+      .madit-table .total-row td { font-weight:700; background:#e8f0f7 !important;
+                                    border-top:2px solid #1a2a3a; color:#0f1923; }
     </style>
     """
     header = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in df.columns) + "</tr></thead>"
     rows_html = ""
     for _, row in df.iterrows():
-        is_total = str(row.get("Description", row.get("", ""))).strip().upper() == "TOTAL"
+        is_total = str(row.get("Description", "")).strip().upper() == "TOTAL"
         row_class = ' class="total-row"' if is_total else ""
         cells = ""
         for col in df.columns:
@@ -326,42 +306,20 @@ def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
 def render_summary_table(summary: pd.DataFrame) -> str:
     styles = """
     <style>
-      .summary-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.82rem;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-      }
-      .summary-table thead tr {
-        background-color: #1a2a3a;
-        color: #ffffff;
-      }
-      .summary-table thead th {
-        padding: 9px 16px;
-        text-align: left;
-        font-weight: 600;
-        letter-spacing: 0.03em;
-      }
-      .summary-table tbody tr {
-        border-bottom: 1px solid #e0e0e0;
-      }
-      .summary-table tbody tr:last-child {
-        font-weight: 700;
-        background-color: #e8f0f7;
-        border-top: 2px solid #1a2a3a;
-      }
-      .summary-table tbody td {
-        padding: 8px 16px;
-        color: #2c3e50;
-        font-variant-numeric: tabular-nums;
-      }
-      .summary-table tbody td:not(:first-child) {
-        text-align: right;
-        white-space: nowrap;
-      }
+      .summary-table { width:100%; border-collapse:collapse; font-size:0.82rem;
+                       font-family:'Inter','Segoe UI',sans-serif; }
+      .summary-table thead tr { background:#1a2a3a; color:#fff; }
+      .summary-table thead th { padding:9px 16px; text-align:left; font-weight:600;
+                                  letter-spacing:.03em; }
+      .summary-table tbody tr { border-bottom:1px solid #e0e0e0; }
+      .summary-table tbody tr:last-child { font-weight:700; background:#e8f0f7;
+                                            border-top:2px solid #1a2a3a; }
+      .summary-table tbody td { padding:8px 16px; color:#2c3e50;
+                                  font-variant-numeric:tabular-nums; }
+      .summary-table tbody td:not(:first-child) { text-align:right; white-space:nowrap; }
     </style>
     """
-    header = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in summary.columns) + "</tr></thead>"
+    header    = "<thead><tr>" + "".join(f"<th>{col}</th>" for col in summary.columns) + "</tr></thead>"
     rows_html = "".join(
         "<tr>" + "".join(f"<td>{row[col]}</td>" for col in summary.columns) + "</tr>"
         for _, row in summary.iterrows()
@@ -373,33 +331,38 @@ def render_summary_table(summary: pd.DataFrame) -> str:
 def show():
     st.title("📋 Quoting")
 
-    distributor = st.radio(
-        "Distributor",
-        ["NEXTGEN", "TECHDATA"],
-        horizontal=True,
-    )
-
-    st.divider()
-
     uploaded = st.file_uploader(
-        f"Upload **{distributor}** quote (.xlsx)",
+        "Upload distributor quote (.xlsx)",
         type=["xlsx"],
-        key=f"upload_{distributor}",
+        key="quote_upload",
     )
 
     if uploaded is None:
-        st.info("Upload an Excel file to get started.")
+        st.info("Upload a NEXTGEN or TECHDATA Excel quote to get started.")
         return
 
-    with st.spinner(f"Processing {distributor} quote..."):
+    with st.spinner("Processing quote..."):
+        sheets      = read_xlsx_native(uploaded)
+        distributor = detect_distributor(sheets)
+
         if distributor == "NEXTGEN":
-            meta, items = parse_nextgen(uploaded)
+            meta, items = parse_nextgen(sheets)
         else:
-            meta, items = parse_techdata(uploaded)
+            meta, items = parse_techdata(sheets)
 
     if items.empty:
-        st.error("No line items found. Is this a valid quote?")
+        st.error("No line items found — is this a valid quote?")
         return
+
+    # Badge showing detected distributor
+    badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
+    st.markdown(
+        f'<span style="background:{badge_color};color:#fff;padding:3px 10px;'
+        f'border-radius:12px;font-size:0.75rem;font-weight:600;">'
+        f'🏷 {distributor}</span>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
 
     # ── Quote info ─────────────────────────────────────────────────────────────
     st.markdown("### 📄 Quote Information")
@@ -412,7 +375,7 @@ def show():
         st.write(f"**End User:** {meta.get('end_user', '—')}")
         if distributor == "NEXTGEN":
             st.write(f"**Description:** {meta.get('description', '—')}")
-            st.write(f"**Reseller:** {meta.get('reseller', '—')}")
+            st.write(f"**Reseller:** {meta.get('reseller',     '—')}")
         else:
             st.write(f"**Prepared By:** {meta.get('prepared_by', '—')}")
 
@@ -437,7 +400,10 @@ def show():
     df_margin  = apply_margin(items, margin_pct)
     sell_cols  = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
     st.markdown(
-        render_html_table(add_totals_sell(df_margin[sell_cols].copy()), ["Unit Price", "Total"]),
+        render_html_table(
+            add_totals_sell(df_margin[sell_cols].copy()),
+            ["Unit Price", "Total"],
+        ),
         unsafe_allow_html=True,
     )
 
@@ -454,10 +420,11 @@ def show():
             max_value=99.0,
             step=0.5,
             format="%.1f",
-            help="Formula: Sell Price = Cost / (1 - Margin)",
+            help="Formula: Sell Price = Cost / (1 − Margin)",
             key="margin_pct",
         )
 
+    # Recalculate with updated margin
     margin_pct = st.session_state["margin_pct"]
     df_margin  = apply_margin(items, margin_pct)
 
@@ -469,9 +436,12 @@ def show():
     sell_inc_gst = sell_total + sell_gst
 
     summary = pd.DataFrame([
-        {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),   "Difference": fmt(sell_total   - cost_total)},
-        {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),     "Difference": fmt(sell_gst     - cost_gst)},
-        {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst), "Difference": fmt(sell_inc_gst - cost_inc_gst)},
+        {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),
+         "Difference": fmt(sell_total   - cost_total)},
+        {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),
+         "Difference": fmt(sell_gst     - cost_gst)},
+        {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst),
+         "Difference": fmt(sell_inc_gst - cost_inc_gst)},
     ])
 
     _, col_mid, _ = st.columns([1, 2, 1])
