@@ -10,6 +10,7 @@ def read_xlsx_native(file) -> pd.DataFrame:
     content = file.read()
     z = zipfile.ZipFile(io.BytesIO(content))
 
+    # Shared strings
     shared_strings = []
     if "xl/sharedStrings.xml" in z.namelist():
         tree = ET.parse(z.open("xl/sharedStrings.xml"))
@@ -19,7 +20,12 @@ def read_xlsx_native(file) -> pd.DataFrame:
             texts = si.findall(f".//{ns}t")
             shared_strings.append("".join(t.text or "" for t in texts))
 
-    tree = ET.parse(z.open("xl/worksheets/sheet1.xml"))
+    # Detectar hoja automáticamente
+    sheet_file = next(
+        name for name in z.namelist()
+        if name.startswith("xl/worksheets/") and name.endswith(".xml")
+    )
+    tree = ET.parse(z.open(sheet_file))
     root = tree.getroot()
     ns = root.tag.split("}")[0] + "}" if "}" in root.tag else ""
 
@@ -53,17 +59,18 @@ def read_xlsx_native(file) -> pd.DataFrame:
 
 
 def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
+    """Parse a NEXTGEN quote xlsx and return (meta, items_df)."""
     df_raw = read_xlsx_native(file)
 
     meta = {}
     try:
         row1 = df_raw.iloc[1]
         meta["quote_number"] = str(row1[1]).strip()
-        meta["description"] = str(row1[4]).strip()
-        meta["expiry"] = str(row1[7]).split(" ")[0].strip()
-        meta["end_user"] = str(row1[26]).strip() if len(row1) > 26 else ""
-        meta["reseller"] = str(row1[31]).strip() if len(row1) > 31 else ""
-        meta["currency"] = str(row1[43]).strip() if len(row1) > 43 else "AUD"
+        meta["description"]  = str(row1[4]).strip()
+        meta["expiry"]       = str(row1[7]).split(" ")[0].strip()
+        meta["end_user"]     = str(row1[26]).strip() if len(row1) > 26 else ""
+        meta["reseller"]     = str(row1[31]).strip() if len(row1) > 31 else ""
+        meta["currency"]     = str(row1[43]).strip() if len(row1) > 43 else "AUD"
     except Exception:
         pass
 
@@ -97,6 +104,7 @@ def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
 
 
 def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
+    """Parse a TECHDATA quote xlsx — pendiente de implementar."""
     return {}, pd.DataFrame()
 
 
