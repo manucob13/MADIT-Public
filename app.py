@@ -6,7 +6,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Inicializar sesión
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
@@ -28,7 +27,30 @@ if not st.session_state["authenticated"]:
                 st.rerun()
             else:
                 st.error("Usuario o contraseña incorrectos.")
+
 else:
-    st.title("🔷 MADIT")
-    st.write(f"Bienvenido, **{st.session_state['username']}**")
-    st.info("Próximamente: menú de herramientas")
+    with st.sidebar:
+        st.image("https://via.placeholder.com/150x50?text=MADIT", width=150)
+        st.divider()
+        st.markdown(f"👤 **{st.session_state['username']}**")
+        st.divider()
+
+        pagina = st.radio(
+            "Menú",
+            ["🏠 Inicio", "📋 Quoting"],
+            label_visibility="hidden"
+        )
+
+        st.divider()
+        if st.button("🚪 Cerrar sesión", use_container_width=True):
+            st.session_state.clear()
+            st.rerun()
+
+    if pagina == "🏠 Inicio":
+        st.title("🔷 MADIT")
+        st.write(f"Bienvenido, **{st.session_state['username']}**")
+        st.info("Selecciona una herramienta en el menú lateral.")
+
+    elif pagina == "📋 Quoting":
+        st.title("📋 Quoting")
+        st.info("Herramienta en construcción...")
