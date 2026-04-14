@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
-import openpyxl
 
 
 def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
     """Parse a NEXTGEN quote xlsx and return (meta, items_df)."""
-    df_raw = pd.read_excel(file, header=None, sheet_name=0)
+    df_raw = pd.read_excel(file, header=None, sheet_name=0, engine="xlrd")
 
     # --- Meta from row index 1 ---
     meta = {}
@@ -49,14 +48,12 @@ def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
 
 def parse_techdata(file) -> tuple[dict, pd.DataFrame]:
     """Parse a TECHDATA quote xlsx — pendiente de implementar."""
-    # Se implementará cuando se reciba un ejemplo de quote TECHDATA
     return {}, pd.DataFrame()
 
 
 def show():
     st.title("📋 Quoting")
 
-    # ── Distributor selector ──────────────────────────────────────────────────
     distributor = st.radio(
         "Distribuidor",
         ["NEXTGEN", "TECHDATA"],
@@ -65,7 +62,6 @@ def show():
 
     st.divider()
 
-    # ── File upload ───────────────────────────────────────────────────────────
     uploaded = st.file_uploader(
         f"Sube el quote de **{distributor}** (.xlsx)",
         type=["xlsx"],
@@ -76,7 +72,6 @@ def show():
         st.info("Sube un fichero Excel para comenzar.")
         return
 
-    # ── Parse ─────────────────────────────────────────────────────────────────
     if distributor == "NEXTGEN":
         with st.spinner("Procesando quote NEXTGEN..."):
             meta, items = parse_nextgen(uploaded)
@@ -88,7 +83,6 @@ def show():
         st.error("No se encontraron line items en el fichero. ¿Es un quote NEXTGEN válido?")
         return
 
-    # ── Quote metadata ────────────────────────────────────────────────────────
     st.markdown("### 📄 Información del Quote")
     col1, col2, col3 = st.columns(3)
     col1.metric("Quote #",  meta.get("quote_number", "—"))
@@ -102,7 +96,6 @@ def show():
 
     st.divider()
 
-    # ── Items table ───────────────────────────────────────────────────────────
     st.markdown("### 🛒 Line Items")
 
     styled = items.style.format({
@@ -111,7 +104,6 @@ def show():
     })
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    # ── Totals ────────────────────────────────────────────────────────────────
     subtotal = items["Total"].sum()
     gst      = subtotal * 0.10
     total    = subtotal + gst
