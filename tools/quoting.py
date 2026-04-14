@@ -4,7 +4,7 @@ import pandas as pd
 
 def parse_nextgen(file) -> tuple[dict, pd.DataFrame]:
     """Parse a NEXTGEN quote xlsx and return (meta, items_df)."""
-    df_raw = pd.read_excel(file, header=None, sheet_name=0, engine="xlrd")
+    df_raw = pd.read_excel(file, header=None, sheet_name=0, engine="calamine")
 
     # --- Meta from row index 1 ---
     meta = {}
