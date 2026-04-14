@@ -65,7 +65,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─── Inline SVG logo ──────────────────────────────────────────────────────────
-# margin-top:12px en el SVG para que el cuadrado azul no quede cortado por arriba
 LOGO_SVG = """<svg style="margin-top:12px; display:inline-block;" width="56" height="56" viewBox="-4 -4 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="MADIT">
   <rect width="32" height="32" rx="7" fill="#1a6fe8"/>
   <path d="M5 23L10 11H14L16.5 18L19 11H23L28 23H24.2L22.4 18L20 23H13L10.6 18L8.8 23H5Z" fill="white"/>
@@ -161,5 +160,5 @@ else:
             st.warning("**📊 Reportes**\nPróximamente...")
 
     elif pagina == "📋 Quoting":
-        st.title("📋 Quoting")
-        st.info("Herramienta en construcción...")
+        from tools.quoting import show
+        show()
