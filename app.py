@@ -6,11 +6,15 @@ st.set_page_config(
     layout="wide",
 )
 
+# ─── Font (loaded separately, not via @import inside CSS) ─────────────────────
+st.markdown(
+    '<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap" rel="stylesheet">',
+    unsafe_allow_html=True
+)
+
 # ─── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  @import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap');
-
   html, body, [class*="css"] { font-family: 'Satoshi', 'Inter', sans-serif; }
 
   section[data-testid="stSidebar"] {
@@ -64,13 +68,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Inline SVG logo (no external image requests) ─────────────────────────────
+# ─── Inline SVG logo ──────────────────────────────────────────────────────────
 LOGO_SVG = """<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="MADIT">
   <rect width="32" height="32" rx="7" fill="#1a6fe8"/>
   <path d="M6 22L10.5 10H13.5L16 17.5L18.5 10H21.5L26 22H22.8L21.2 17.5L19.2 22H12.8L10.8 17.5L9.2 22H6Z" fill="white"/>
 </svg>"""
 
-LOGO_SIDEBAR = f"""<div class="madit-logo">
+LOGO_SIDEBAR = """<div class="madit-logo">
   <svg width="34" height="34" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect width="32" height="32" rx="7" fill="#1a6fe8"/>
     <path d="M6 22L10.5 10H13.5L16 17.5L18.5 10H21.5L26 22H22.8L21.2 17.5L19.2 22H12.8L10.8 17.5L9.2 22H6Z" fill="white"/>
