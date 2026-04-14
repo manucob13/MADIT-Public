@@ -49,12 +49,8 @@ st.markdown("""
   .welcome-card h2 { color: #ffffff; font-size: 1.4rem; font-weight: 600; margin-bottom: 4px; }
   .welcome-card p { color: #7fa3c4; font-size: 0.9rem; margin: 0; }
 
-  .login-logo {
-      text-align: center; margin-bottom: 28px;
-      overflow: visible; padding-top: 8px;
-  }
-  .login-logo svg { display: inline-block; overflow: visible; }
-  .login-logo-text { font-size: 1.8rem; font-weight: 700; letter-spacing: 0.05em; color: #1a6fe8; margin-top: 10px; }
+  .login-logo { text-align: center; margin-bottom: 28px; }
+  .login-logo-text { font-size: 1.8rem; font-weight: 700; letter-spacing: 0.05em; color: #1a6fe8; margin-top: 8px; }
   .login-subtitle { font-size: 0.85rem; color: #5a7a99; margin-top: 4px; }
 
   section[data-testid="stSidebar"] div.stButton button {
@@ -69,14 +65,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─── Inline SVG logo ──────────────────────────────────────────────────────────
-# Login: larger render size (48x48) with same viewBox so the M is not clipped
-LOGO_SVG = """<svg width="48" height="48" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="MADIT">
+# viewBox con padding "-4 -4 40 40" da 4px de margen en todos los lados
+# así la M nunca toca el borde y no se recorta
+LOGO_SVG = """<svg width="56" height="56" viewBox="-4 -4 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="MADIT">
   <rect width="32" height="32" rx="7" fill="#1a6fe8"/>
   <path d="M5 23L10 11H14L16.5 18L19 11H23L28 23H24.2L22.4 18L20 23H13L10.6 18L8.8 23H5Z" fill="white"/>
 </svg>"""
 
 LOGO_SIDEBAR = """<div class="madit-logo">
-  <svg width="34" height="34" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <svg width="34" height="34" viewBox="-2 -2 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect width="32" height="32" rx="7" fill="#1a6fe8"/>
     <path d="M5 23L10 11H14L16.5 18L19 11H23L28 23H24.2L22.4 18L20 23H13L10.6 18L8.8 23H5Z" fill="white"/>
   </svg>
