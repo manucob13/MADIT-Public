@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 XERO_AUTH_URL  = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_API_BASE  = "https://api.xero.com/api.xro/2.0"
-SCOPES         = "openid profile email accounting.transactions accounting.contacts offline_access"
+SCOPES         = "openid profile email accounting.invoices accounting.contacts offline_access"
 
 
 def get_auth_url() -> str:
@@ -97,11 +97,6 @@ def is_connected() -> bool:
 
 
 def handle_callback() -> bool:
-    """
-    Llamar al inicio de cada página.
-    Detecta si Xero redirigió con ?code=... y lo intercambia por tokens.
-    Retorna True si se completó el intercambio en esta llamada.
-    """
     params = st.query_params
     if params.get("state") != "xero_connect" or "code" not in params:
         return False
