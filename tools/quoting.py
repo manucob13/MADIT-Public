@@ -469,3 +469,31 @@ def show():
     _, col_mid, _ = st.columns([1, 2, 1])
     with col_mid:
         st.markdown(render_summary_table(summary), unsafe_allow_html=True)
+
+    # ── Xero integration ──────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 🔗 Xero")
+
+    from integrations import xero as xero_integration
+
+    if xero_integration.is_connected():
+        st.success("✅ Xero connected")
+        if st.button("📤 Create draft invoice in Xero", type="primary"):
+            with st.spinner("Sending to Xero..."):
+                try:
+                    invoice = xero_integration.create_draft_invoice(meta, items, margin_pct)
+                    inv_num = invoice.get("InvoiceNumber", "DRAFT")
+                    inv_id  = invoice.get("InvoiceID", "")
+                    st.success(f"✅ Invoice created in Xero: **{inv_num}** (ID: `{inv_id}`)")
+                except Exception as e:
+                    st.error(f"Error creating invoice: {e}")
+    else:
+        auth_url = xero_integration.get_auth_url()
+        st.markdown(
+            f'<a href="{auth_url}" target="_self">'
+            f'<button style="background:#1a6fe8;color:#fff;border:none;padding:8px 18px;'
+            f'border-radius:8px;font-size:0.9rem;cursor:pointer;">🔗 Connect to Xero</button>'
+            f'</a>',
+            unsafe_allow_html=True,
+        )
+
