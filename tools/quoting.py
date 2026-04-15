@@ -471,36 +471,36 @@ def show():
 
     # ── Xero ───────────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("### 🔗 Enviar a Xero")
+    st.markdown("### 🔗 Send to Xero")
 
     from integrations import xero as xero_integration
 
     if xero_integration.is_connected():
-        st.success("✅ Xero conectado")
+        st.success("✅ Xero connected")
         if st.button("📤 Send to Xero as Draft Quote", type="primary"):
-            with st.spinner("Enviando a Xero..."):
+            with st.spinner("Sending to Xero..."):
                 try:
-                    result = xero_integration.create_draft_quote(meta, items, margin_pct)
+                    result    = xero_integration.create_draft_quote(meta, items, margin_pct)
                     quote_num = result.get("QuoteNumber", "")
                     quote_id  = result.get("QuoteID", "")
-                    st.success(f"✅ Draft quote creado en Xero! Quote #{quote_num} — ID: {quote_id}")
+                    st.success(f"✅ Draft quote created in Xero! Quote #{quote_num} — ID: {quote_id}")
                 except Exception as e:
-                    st.error(f"❌ Error enviando a Xero: {e}")
+                    st.error(f"❌ Error sending to Xero: {e}")
     else:
         try:
             auth_url = xero_integration.get_auth_url()
-            col_btn, col_verify, _ = st.columns([2, 2, 3])
-            with col_btn:
+            col_connect, col_verify, _ = st.columns([2, 2, 3])
+            with col_connect:
                 st.markdown(
                     f'<a href="{auth_url}" target="_blank" rel="noopener noreferrer" '
                     f'style="display:inline-block;background:#1a6fe8;color:#fff;'
                     f'padding:10px 18px;border-radius:8px;text-decoration:none;'
                     f'font-size:0.88rem;font-weight:500;">'
-                    f'🔗 Conectar con Xero</a>',
+                    f'🔗 Connect to Xero</a>',
                     unsafe_allow_html=True,
                 )
             with col_verify:
-                if st.button("🔄 Ya conecté — verificar", type="secondary"):
+                if st.button("🔄 I've connected — verify", type="secondary"):
                     st.rerun()
         except KeyError:
             st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
