@@ -71,7 +71,8 @@ if _params.get("state") == "xero_connect" and "code" in _params:
         tokens = xero_integration.exchange_code(_params["code"])
         st.session_state["xero_tokens"] = tokens
         st.query_params.clear()
-        st.success("✅ Xero connected successfully.")
+        st.session_state["xero_just_connected"] = True
+        st.rerun()
     except Exception as e:
         st.error(f"Error connecting Xero: {e}")
         st.query_params.clear()
@@ -107,16 +108,26 @@ if not st.session_state["authenticated"]:
 
 # ─── APP ───────────────────────────────────────────────────────────────────────
 else:
+    xero_connected = xero_integration.is_connected()
+    xero_status = "🟢 Xero" if xero_connected else "🔴 Xero"
+
     with st.sidebar:
         st.markdown(LOGO_SIDEBAR, unsafe_allow_html=True)
         st.divider()
 
         pagina = st.radio(
             "Menú",
-            ["📋 QUOTES"],
+            ["📋 QUOTES", f"🔗 Xero Connection"],
             label_visibility="hidden"
         )
 
+        st.divider()
+        st.markdown(
+            f'<div style="font-size:0.75rem;color:#5a7a99;padding:4px 0;">'
+            f'{"✅ Xero conectado" if xero_connected else "⚠️ Xero desconectado"}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
         st.divider()
 
         if st.button("🚪 Cerrar sesión", use_container_width=True):
@@ -127,3 +138,26 @@ else:
     if pagina == "📋 QUOTES":
         from tools.quoting import show
         show()
+
+    elif pagina == "🔗 Xero Connection":
+        st.title("🔗 Xero Connection")
+
+        if st.session_state.pop("xero_just_connected", False):
+            st.success("✅ Xero conectado exitosamente.")
+
+        if xero_connected:
+            st.success("✅ Xero está conectado y listo para usar.")
+            st.info("Podés ir a **📋 QUOTES** y usar el botón 'Send to Xero as Draft Quote'.")
+            if st.button("🔌 Desconectar Xero", type="secondary"):
+                st.session_state.pop("xero_tokens", None)
+                st.session_state.pop("xero_tenant_id", None)
+                st.rerun()
+        else:
+            st.warning("⚠️ Xero no está conectado.")
+            st.markdown("Hacé click en el botón para autorizar el acceso a tu cuenta de Xero.")
+            try:
+                auth_url = xero_integration.get_auth_url()
+                st.link_button("🔗 Conectar con Xero", auth_url, type="primary")
+                st.caption("Se abrirá Xero en esta misma ventana. Después de autorizar, volverás automáticamente.")
+            except KeyError:
+                st.error("⚠️ Credenciales de Xero no configuradas. Agregá `[xero]` en los Streamlit Secrets.")
