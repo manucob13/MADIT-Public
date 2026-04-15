@@ -352,6 +352,9 @@ def render_summary_table(summary: pd.DataFrame) -> str:
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 def show():
+    from integrations import xero as xero_integration  # ← movido aquí arriba
+    xero_integration.handle_callback()                  # ← procesa el OAuth callback
+
     st.title("📋 QUOTES")
 
     uploaded = st.file_uploader(
@@ -403,7 +406,6 @@ def show():
     st.divider()
 
     # ── Margin input ───────────────────────────────────────────────────────────
-    # Initialise only once so the widget always has a concrete starting value
     if "margin_pct" not in st.session_state:
         st.session_state["margin_pct"] = 10.0
 
@@ -474,8 +476,6 @@ def show():
     st.divider()
     st.markdown("### 🔗 Xero")
 
-    from integrations import xero as xero_integration
-
     if xero_integration.is_connected():
         st.success("✅ Xero connected")
         if st.button("📤 Create draft invoice in Xero", type="primary"):
@@ -488,12 +488,14 @@ def show():
                 except Exception as e:
                     st.error(f"Error creating invoice: {e}")
     else:
-        auth_url = xero_integration.get_auth_url()
-        st.markdown(
-            f'<a href="{auth_url}" target="_self">'
-            f'<button style="background:#1a6fe8;color:#fff;border:none;padding:8px 18px;'
-            f'border-radius:8px;font-size:0.9rem;cursor:pointer;">🔗 Connect to Xero</button>'
-            f'</a>',
-            unsafe_allow_html=True,
-        )
-
+        try:
+            auth_url = xero_integration.get_auth_url()
+            st.markdown(
+                f'<a href="{auth_url}" target="_self">'
+                f'<button style="background:#1a6fe8;color:#fff;border:none;padding:8px 18px;'
+                f'border-radius:8px;font-size:0.9rem;cursor:pointer;">🔗 Connect to Xero</button>'
+                f'</a>',
+                unsafe_allow_html=True,
+            )
+        except KeyError:
+            st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
