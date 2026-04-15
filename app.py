@@ -62,6 +62,20 @@ LOGO_SIDEBAR = """<div class="madit-logo">
   <span class="madit-logo-text">MADIT</span>
 </div>"""
 
+# ─── Xero OAuth callback ───────────────────────────────────────────────────────
+from integrations import xero as xero_integration
+
+_params = st.query_params
+if _params.get("state") == "xero_connect" and "code" in _params:
+    try:
+        tokens = xero_integration.exchange_code(_params["code"])
+        st.session_state["xero_tokens"] = tokens
+        st.query_params.clear()
+        st.success("✅ Xero connected successfully.")
+    except Exception as e:
+        st.error(f"Error connecting Xero: {e}")
+        st.query_params.clear()
+
 # ─── Session state ─────────────────────────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
