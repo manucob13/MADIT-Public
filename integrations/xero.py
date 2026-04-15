@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 XERO_AUTH_URL  = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_API_BASE  = "https://api.xero.com/api.xro/2.0"
-SCOPES         = "openid profile email accounting.quotes accounting.contacts offline_access"
+SCOPES         = "openid profile email accounting.invoices accounting.contacts offline_access"
 
 
 def get_auth_url() -> str:
