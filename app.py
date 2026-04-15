@@ -62,6 +62,22 @@ LOGO_SIDEBAR = """<div class="madit-logo">
   <span class="madit-logo-text">MADIT</span>
 </div>"""
 
+# ─── Xero OAuth callback ───────────────────────────────────────────────────────
+from integrations import xero as xero_integration
+
+_params = st.query_params
+if _params.get("state") == "xero_connect" and "code" in _params:
+    try:
+        tokens = xero_integration.exchange_code(_params["code"])
+        st.session_state["xero_tokens"] = tokens
+        st.query_params.clear()
+        st.success("✅ Xero connected successfully. You can close this tab and go back to the app.")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Error connecting Xero: {e}")
+        st.query_params.clear()
+        st.stop()
+
 # ─── Session state ─────────────────────────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -78,9 +94,9 @@ if not st.session_state["authenticated"]:
             unsafe_allow_html=True
         )
         with st.form("login_form"):
-            username = st.text_input("Usuario", placeholder="tu usuario")
-            password = st.text_input("Contraseña", type="password", placeholder="••••••••")
-            submitted = st.form_submit_button("Entrar", use_container_width=True)
+            username = st.text_input("Username", placeholder="your username")
+            password = st.text_input("Password", type="password", placeholder="••••••••")
+            submitted = st.form_submit_button("Login", use_container_width=True)
 
             if submitted:
                 usuarios = st.secrets["credentials"]
@@ -89,7 +105,7 @@ if not st.session_state["authenticated"]:
                     st.session_state["username"] = username
                     st.rerun()
                 else:
-                    st.error("Usuario o contraseña incorrectos.")
+                    st.error("Invalid username or password.")
 
 # ─── APP ───────────────────────────────────────────────────────────────────────
 else:
@@ -98,14 +114,14 @@ else:
         st.divider()
 
         pagina = st.radio(
-            "Menú",
+            "Menu",
             ["📋 QUOTES"],
             label_visibility="hidden"
         )
 
         st.divider()
 
-        if st.button("🚪 Cerrar sesión", use_container_width=True):
+        if st.button("🚪 Log out", use_container_width=True):
             st.session_state.clear()
             st.rerun()
 
