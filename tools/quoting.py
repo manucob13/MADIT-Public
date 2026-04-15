@@ -4,8 +4,6 @@ import zipfile
 import xml.etree.ElementTree as ET
 import io
 import re
-import json
-import pathlib
 
 
 # ── XLSX reader ────────────────────────────────────────────────────────────────
@@ -352,9 +350,6 @@ def render_summary_table(summary: pd.DataFrame) -> str:
     return styles + f'<table class="summary-table">{header}<tbody>{rows_html}</tbody></table>'
 
 
-TOKEN_FILE = pathlib.Path("/tmp/xero_tokens.json")
-
-
 # ── Main page ──────────────────────────────────────────────────────────────────
 def show():
     st.title("📋 QUOTES")
@@ -494,7 +489,6 @@ def show():
     else:
         try:
             auth_url = xero_integration.get_auth_url()
-
             col_connect, col_verify, _ = st.columns([2, 2, 3])
             with col_connect:
                 st.markdown(
@@ -507,13 +501,6 @@ def show():
                 )
             with col_verify:
                 if st.button("🔄 I've connected — verify", type="secondary"):
-                    if TOKEN_FILE.exists():
-                        tokens = json.loads(TOKEN_FILE.read_text())
-                        st.session_state["xero_tokens"] = tokens
-                        TOKEN_FILE.unlink()  # limpiar el archivo
-                        st.rerun()
-                    else:
-                        st.warning("Token not found yet — wait a few seconds and try again.")
-
+                    st.rerun()
         except KeyError:
             st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
