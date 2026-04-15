@@ -4,6 +4,11 @@ import zipfile
 import xml.etree.ElementTree as ET
 import io
 import re
+import json
+import pathlib
+
+
+TOKEN_FILE = pathlib.Path("/tmp/xero_tokens.json")
 
 
 # ── XLSX reader ────────────────────────────────────────────────────────────────
@@ -69,7 +74,7 @@ def read_xlsx_native(file) -> dict:
 
 def extract_amount(val: str) -> float:
     cleaned = val.replace(",", "")
-    match = re.search(r'\d+\.?\d*', cleaned)
+    match = re.search(r'\d+\.?\d*', cleaned)   # ← fix: sin doble escape
     if match:
         try:
             return float(match.group())
@@ -158,7 +163,7 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                         break
             if "expiration date" in row_str or "expiry" in row_str:
                 for i, val in enumerate(row_vals):
-                    if ("expiration" in val.lower() or "expiry" in val.lower()):
+                    if "expiration" in val.lower() or "expiry" in val.lower():
                         for v in row_vals[i+1:]:
                             if "/" in v or (len(v) >= 8 and "-" in v):
                                 meta["expiry"] = v
@@ -402,7 +407,7 @@ def show():
 
     st.divider()
 
-    # ── Margin input ───────────────────────────────────────────────────────────
+    # ── Margin ─────────────────────────────────────────────────────────────────
     if "margin_pct" not in st.session_state:
         st.session_state["margin_pct"] = 10.0
 
@@ -501,6 +506,12 @@ def show():
                 )
             with col_verify:
                 if st.button("🔄 I've connected — verify", type="secondary"):
-                    st.rerun()
+                    if TOKEN_FILE.exists():
+                        tokens = json.loads(TOKEN_FILE.read_text())
+                        st.session_state["xero_tokens"] = tokens
+                        TOKEN_FILE.unlink()
+                        st.rerun()
+                    else:
+                        st.warning("Token not found yet — wait a few seconds and try again.")
         except KeyError:
             st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
