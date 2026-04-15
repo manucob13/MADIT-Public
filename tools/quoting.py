@@ -428,7 +428,7 @@ def show():
             add_totals_sell(df_margin[sell_cols].copy()),
             ["Unit Price", "Total"],
         ),
-        unsafe_allow_allow_html=True,
+        unsafe_allow_html=True,
     )
 
     st.divider()
