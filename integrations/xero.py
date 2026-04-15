@@ -11,6 +11,8 @@ SCOPES         = "openid profile email accounting.transactions accounting.contac
 
 
 def get_auth_url() -> str:
+    if "xero" not in st.secrets:
+        raise KeyError("Xero secrets not configured in secrets.toml")
     cfg = st.secrets["xero"]
     params = {
         "response_type": "code",
@@ -89,7 +91,31 @@ def get_valid_token() -> str | None:
 
 
 def is_connected() -> bool:
+    if "xero" not in st.secrets:
+        return False
     return get_valid_token() is not None
+
+
+def handle_callback() -> bool:
+    """
+    Llamar al inicio de cada página.
+    Detecta si Xero redirigió con ?code=... y lo intercambia por tokens.
+    Retorna True si se completó el intercambio en esta llamada.
+    """
+    params = st.query_params
+    if params.get("state") != "xero_connect" or "code" not in params:
+        return False
+    code = params["code"]
+    try:
+        tokens = exchange_code(code)
+        st.session_state["xero_tokens"] = tokens
+        st.query_params.clear()
+        st.success("✅ Xero conectado exitosamente.")
+        return True
+    except Exception as e:
+        st.error(f"Error al conectar con Xero: {e}")
+        st.query_params.clear()
+        return False
 
 
 def get_tenant_id() -> str | None:
