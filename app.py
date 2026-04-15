@@ -109,7 +109,6 @@ if not st.session_state["authenticated"]:
 # ─── APP ───────────────────────────────────────────────────────────────────────
 else:
     xero_connected = xero_integration.is_connected()
-    xero_status = "🟢 Xero" if xero_connected else "🔴 Xero"
 
     with st.sidebar:
         st.markdown(LOGO_SIDEBAR, unsafe_allow_html=True)
@@ -117,7 +116,7 @@ else:
 
         pagina = st.radio(
             "Menú",
-            ["📋 QUOTES", f"🔗 Xero Connection"],
+            ["📋 QUOTES", "🔗 Xero Connection"],
             label_visibility="hidden"
         )
 
@@ -154,10 +153,18 @@ else:
                 st.rerun()
         else:
             st.warning("⚠️ Xero no está conectado.")
-            st.markdown("Hacé click en el botón para autorizar el acceso a tu cuenta de Xero.")
+            st.markdown("Hacé click en el botón de abajo para autorizar el acceso a tu cuenta de Xero.")
+            st.markdown("&nbsp;", unsafe_allow_html=True)
             try:
                 auth_url = xero_integration.get_auth_url()
-                st.link_button("🔗 Conectar con Xero", auth_url, type="primary")
-                st.caption("Se abrirá Xero en esta misma ventana. Después de autorizar, volverás automáticamente.")
+                st.markdown(
+                    f'<a href="{auth_url}" target="_top" '
+                    f'style="display:inline-block;background:#1a6fe8;color:#fff;'
+                    f'padding:10px 22px;border-radius:8px;text-decoration:none;'
+                    f'font-size:0.95rem;font-family:Inter,sans-serif;font-weight:500;">'
+                    f'🔗 Conectar con Xero</a>',
+                    unsafe_allow_html=True,
+                )
+                st.caption("Navegarás a Xero y volverás automáticamente a esta página una vez autorizado.")
             except KeyError:
                 st.error("⚠️ Credenciales de Xero no configuradas. Agregá `[xero]` en los Streamlit Secrets.")
