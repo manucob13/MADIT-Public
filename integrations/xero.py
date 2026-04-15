@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 XERO_AUTH_URL  = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_API_BASE  = "https://api.xero.com/api.xro/2.0"
-SCOPES         = "openid profile email accounting.invoices accounting.contacts offline_access"
+SCOPES         = "openid profile email accounting.quotes accounting.contacts offline_access"
 
 
 def get_auth_url() -> str:
@@ -133,7 +133,7 @@ def get_tenant_id() -> str | None:
     return None
 
 
-def create_draft_invoice(meta: dict, items, margin_pct: float) -> dict:
+def create_draft_quote(meta: dict, items, margin_pct: float) -> dict:
     token     = get_valid_token()
     tenant_id = get_tenant_id()
     if not token or not tenant_id:
@@ -157,32 +157,33 @@ def create_draft_invoice(meta: dict, items, margin_pct: float) -> dict:
             "AccountCode": "200",
         })
 
-    invoice_payload = {
-        "Type":         "ACCREC",
+    quote_payload = {
         "Status":       "DRAFT",
         "Reference":    meta.get("quote_number", ""),
         "CurrencyCode": meta.get("currency", "AUD"),
         "LineItems":    line_items,
+        "Title":        f"Quote {meta.get('quote_number', '')}",
+        "Summary":      meta.get("description", ""),
     }
     if meta.get("end_user"):
-        invoice_payload["Contact"] = {"Name": meta["end_user"]}
+        quote_payload["Contact"] = {"Name": meta["end_user"]}
     if meta.get("expiry"):
-        invoice_payload["DueDate"] = meta["expiry"]
+        quote_payload["ExpiryDate"] = meta["expiry"]
 
     resp = requests.post(
-        f"{XERO_API_BASE}/Invoices",
+        f"{XERO_API_BASE}/Quotes",
         headers={
             "Authorization":  f"Bearer {token}",
             "Xero-Tenant-Id": tenant_id,
             "Content-Type":   "application/json",
             "Accept":         "application/json",
         },
-        json={"Invoices": [invoice_payload]},
+        json={"Quotes": [quote_payload]},
         timeout=15,
     )
     resp.raise_for_status()
-    result   = resp.json()
-    invoices = result.get("Invoices", [])
-    if invoices:
-        return invoices[0]
-    raise RuntimeError("Xero did not return a valid invoice.")
+    result = resp.json()
+    quotes = result.get("Quotes", [])
+    if quotes:
+        return quotes[0]
+    raise RuntimeError("Xero did not return a valid quote.")
