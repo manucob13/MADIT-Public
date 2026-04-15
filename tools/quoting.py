@@ -482,13 +482,7 @@ def show():
     else:
         try:
             auth_url = xero_integration.get_auth_url()
-            st.markdown(
-                f'<a href="{auth_url}" target="_blank" rel="noopener noreferrer">'
-                f'<button style="background:#1a6fe8;color:#fff;border:none;padding:8px 18px;'
-                f'border-radius:8px;font-size:0.9rem;cursor:pointer;">🔗 Connect to Xero</button>'
-                f'</a>',
-                unsafe_allow_html=True,
-            )
-            st.caption("👆 Se abrirá una pestaña nueva. Después de autorizar en Xero, volvé a esta página y recargá.")
+            st.link_button("🔗 Connect to Xero", auth_url, type="primary")
+            st.caption("Te redirigirá a Xero y volverá automáticamente a esta página con la sesión activa.")
         except KeyError:
             st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
