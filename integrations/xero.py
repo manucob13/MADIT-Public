@@ -10,6 +10,7 @@ XERO_API_BASE  = "https://api.xero.com/api.xro/2.0"
 SCOPES         = "openid profile email accounting.invoices accounting.contacts accounting.settings offline_access"
 
 BRANDING_THEME_NAME = "MAD IT WORKS RESELLER"
+ITEM_CODE           = "MADITWORKS-PROD"
 
 
 def get_auth_url() -> str:
@@ -166,7 +167,9 @@ def create_draft_quote(meta: dict, items, margin_pct: float) -> dict:
     if not token or not tenant_id:
         raise RuntimeError("Xero is not connected.")
 
-    m = margin_pct / 100.0
+    m     = margin_pct / 100.0
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     line_items = []
     for _, row in items.iterrows():
         try:
@@ -176,8 +179,8 @@ def create_draft_quote(meta: dict, items, margin_pct: float) -> dict:
         except (ValueError, TypeError):
             continue
         line_items.append({
-            "Description": str(row.get("Description", "")),
-            "ItemCode":    str(row.get("SKU", "")),
+            "ItemCode":    ITEM_CODE,
+            "Description": f"[{str(row.get('SKU', ''))}] {str(row.get('Description', ''))}",
             "Quantity":    qty,
             "UnitAmount":  unit_price,
             "AccountCode": "200",
@@ -187,7 +190,8 @@ def create_draft_quote(meta: dict, items, margin_pct: float) -> dict:
 
     quote_payload = {
         "Status":          "DRAFT",
-        "CurrencyCode":    meta.get("currency", "AUD"),
+        "Date":            today,
+        "CurrencyCode":    meta.get("currency", "AUD") or "AUD",
         "LineAmountTypes": "EXCLUSIVE",
         "Contact":         {"Name": contact_name},
         "LineItems":       line_items,
