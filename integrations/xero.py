@@ -9,6 +9,8 @@ XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_API_BASE  = "https://api.xero.com/api.xro/2.0"
 SCOPES         = "openid profile email accounting.invoices accounting.contacts offline_access"
 
+BRANDING_THEME_NAME = "MAD IT WORKS RESELLER"
+
 
 def get_auth_url() -> str:
     if "xero" not in st.secrets:
@@ -133,42 +135,75 @@ def get_tenant_id() -> str | None:
     return None
 
 
+def get_branding_theme_id() -> str | None:
+    """Busca el BrandingThemeID por nombre, lo cachea en session_state."""
+    cached = st.session_state.get("xero_branding_theme_id")
+    if cached:
+        return cached
+    token     = get_valid_token()
+    tenant_id = get_tenant_id()
+    if not token or not tenant_id:
+        return None
+    resp = requests.get(
+        f"{XERO_API_BASE}/BrandingThemes",
+        headers={
+            "Authorization":  f"Bearer {token}",
+            "Xero-Tenant-Id": tenant_id,
+            "Accept":         "application/json",
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    themes = resp.json().get("BrandingThemes", [])
+    for theme in themes:
+        if theme.get("Name", "").strip().upper() == BRANDING_THEME_NAME.upper():
+            st.session_state["xero_branding_theme_id"] = theme["BrandingThemeID"]
+            return theme["BrandingThemeID"]
+    return None
+
+
 def create_draft_quote(meta: dict, items, margin_pct: float) -> dict:
     token     = get_valid_token()
     tenant_id = get_tenant_id()
     if not token or not tenant_id:
         raise RuntimeError("Xero is not connected.")
 
+    # Calcular sell prices con margin
     m = margin_pct / 100.0
+
     line_items = []
     for _, row in items.iterrows():
         try:
             unit_cost  = float(row["Unit Cost"])
             unit_price = round(unit_cost / (1 - m), 4) if m < 1 else unit_cost
             qty        = int(row["Qty"])
+            sku        = str(row.get("SKU", "")).strip()
         except (ValueError, TypeError):
             continue
+        if not sku:
+            continue
         line_items.append({
-            "Description": str(row.get("Description", "")),
-            "ItemCode":    str(row.get("SKU", "")),
+            "ItemCode":    "MADITworks - PROD",
+            "Description": sku,           # ← SKU como description
             "Quantity":    qty,
             "UnitAmount":  unit_price,
-            "TaxType":     "OUTPUT2",
-            "AccountCode": "200",
         })
 
     quote_payload = {
-        "Status":       "DRAFT",
-        "Reference":    meta.get("quote_number", ""),
-        "CurrencyCode": meta.get("currency", "AUD"),
-        "LineItems":    line_items,
-        "Title":        f"Quote {meta.get('quote_number', '')}",
-        "Summary":      meta.get("description", ""),
+        "Status":          "DRAFT",
+        "LineAmountTypes": "EXCLUSIVE",
+        "CurrencyCode":    meta.get("currency", "AUD"),
+        "LineItems":       line_items,
     }
-    if meta.get("end_user"):
-        quote_payload["Contact"] = {"Name": meta["end_user"]}
+
+    # Expiry date si existe
     if meta.get("expiry"):
         quote_payload["ExpiryDate"] = meta["expiry"]
+
+    # Branding theme — si no se encuentra, Xero usa el default
+    branding_id = get_branding_theme_id()
+    if branding_id:
+        quote_payload["BrandingThemeID"] = branding_id
 
     resp = requests.post(
         f"{XERO_API_BASE}/Quotes",
