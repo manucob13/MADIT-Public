@@ -136,7 +136,6 @@ def get_tenant_id() -> str | None:
 
 
 def get_branding_theme_id() -> str | None:
-    """Busca el BrandingThemeID por nombre, lo cachea en session_state."""
     cached = st.session_state.get("xero_branding_theme_id")
     if cached:
         return cached
@@ -154,8 +153,7 @@ def get_branding_theme_id() -> str | None:
         timeout=10,
     )
     resp.raise_for_status()
-    themes = resp.json().get("BrandingThemes", [])
-    for theme in themes:
+    for theme in resp.json().get("BrandingThemes", []):
         if theme.get("Name", "").strip().upper() == BRANDING_THEME_NAME.upper():
             st.session_state["xero_branding_theme_id"] = theme["BrandingThemeID"]
             return theme["BrandingThemeID"]
@@ -168,39 +166,36 @@ def create_draft_quote(meta: dict, items, margin_pct: float) -> dict:
     if not token or not tenant_id:
         raise RuntimeError("Xero is not connected.")
 
-    # Calcular sell prices con margin
     m = margin_pct / 100.0
-
     line_items = []
     for _, row in items.iterrows():
         try:
             unit_cost  = float(row["Unit Cost"])
             unit_price = round(unit_cost / (1 - m), 4) if m < 1 else unit_cost
             qty        = int(row["Qty"])
-            sku        = str(row.get("SKU", "")).strip()
         except (ValueError, TypeError):
             continue
-        if not sku:
-            continue
         line_items.append({
-            "ItemCode":    "MADITworks - PROD",
-            "Description": sku,           # ← SKU como description
+            "Description": str(row.get("Description", "")),
+            "ItemCode":    str(row.get("SKU", "")),
             "Quantity":    qty,
             "UnitAmount":  unit_price,
+            "AccountCode": "200",
         })
+
+    contact_name = meta.get("end_user", "").strip() or "TBD"
 
     quote_payload = {
         "Status":          "DRAFT",
-        "LineAmountTypes": "EXCLUSIVE",
         "CurrencyCode":    meta.get("currency", "AUD"),
+        "LineAmountTypes": "EXCLUSIVE",
+        "Contact":         {"Name": contact_name},
         "LineItems":       line_items,
+        "Title":           f"Quote {meta.get('quote_number', '')}",
+        "Summary":         meta.get("description", ""),
+        "Reference":       meta.get("quote_number", ""),
     }
 
-    # Expiry date si existe
-    if meta.get("expiry"):
-        quote_payload["ExpiryDate"] = meta["expiry"]
-
-    # Branding theme — si no se encuentra, Xero usa el default
     branding_id = get_branding_theme_id()
     if branding_id:
         quote_payload["BrandingThemeID"] = branding_id
