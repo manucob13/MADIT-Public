@@ -352,9 +352,6 @@ def render_summary_table(summary: pd.DataFrame) -> str:
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 def show():
-    from integrations import xero as xero_integration
-    xero_integration.handle_callback()
-
     st.title("📋 QUOTES")
 
     uploaded = st.file_uploader(
@@ -472,32 +469,17 @@ def show():
     with col_mid:
         st.markdown(render_summary_table(summary), unsafe_allow_html=True)
 
-    # ── Xero integration ──────────────────────────────────────────────────────
+    # ── Xero ──────────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("### 🔗 Xero")
-
+    from integrations import xero as xero_integration
     if xero_integration.is_connected():
-        st.success("✅ Xero connected — integration working correctly!")
-        st.info("📌 Invoice creation is disabled during testing.")
-    else:
-        try:
-            auth_url = xero_integration.get_auth_url()
-            st.components.v1.html(
-                f"""
-                <script>
-                    function connectXero() {{
-                        window.top.location.href = "{auth_url}";
-                    }}
-                </script>
-                <button onclick="connectXero()"
-                    style="background:#1a6fe8;color:#fff;border:none;padding:10px 20px;
-                           border-radius:8px;font-size:0.9rem;cursor:pointer;
-                           font-family:'Inter',sans-serif;">
-                    🔗 Connect to Xero
-                </button>
-                """,
-                height=50,
-            )
-            st.caption("Te redirigirá a Xero y volverá automáticamente con la sesión activa.")
-        except KeyError:
-            st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
+        st.markdown("### 🔗 Xero")
+        if st.button("📤 Send to Xero as Draft Quote", type="primary"):
+            with st.spinner("Sending to Xero..."):
+                try:
+                    result = xero_integration.create_draft_quote(meta, items, margin_pct)
+                    quote_id = result.get("QuoteID", "")
+                    quote_num = result.get("QuoteNumber", "")
+                    st.success(f"✅ Draft quote created in Xero! Quote #{quote_num} (ID: {quote_id})")
+                except Exception as e:
+                    st.error(f"❌ Error sending to Xero: {e}")
