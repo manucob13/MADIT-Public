@@ -105,7 +105,7 @@ def handle_callback() -> bool:
         tokens = exchange_code(code)
         st.session_state["xero_tokens"] = tokens
         st.query_params.clear()
-        st.success("✅ Xero conectado exitosamente.")
+        st.rerun()
         return True
     except Exception as e:
         st.error(f"Error al conectar con Xero: {e}")
