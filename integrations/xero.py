@@ -10,7 +10,7 @@ XERO_API_BASE  = "https://api.xero.com/api.xro/2.0"
 SCOPES         = "openid profile email accounting.invoices accounting.contacts accounting.settings offline_access"
 
 BRANDING_THEME_NAME = "MAD IT WORKS RESELLER"
-ITEM_CODE           = "MADITWORKS-PROD"
+ITEM_CODE = "MADITworks - PROD"
 
 
 def get_auth_url() -> str:
