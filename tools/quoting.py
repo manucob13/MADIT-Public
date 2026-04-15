@@ -355,14 +355,6 @@ def show():
     from integrations import xero as xero_integration
     xero_integration.handle_callback()
 
-    # ── DEBUG TEMPORAL — borrar después ───────────────────
-    st.write("Secrets keys:", list(st.secrets.keys()))
-    if "xero" in st.secrets:
-        st.write("Xero keys:", list(st.secrets["xero"].keys()))
-    else:
-        st.error("❌ 'xero' NO está en st.secrets")
-    # ──────────────────────────────────────────────────────
-
     st.title("📋 QUOTES")
 
     uploaded = st.file_uploader(
@@ -436,7 +428,7 @@ def show():
             add_totals_sell(df_margin[sell_cols].copy()),
             ["Unit Price", "Total"],
         ),
-        unsafe_allow_html=True,
+        unsafe_allow_allow_html=True,
     )
 
     st.divider()
@@ -485,16 +477,8 @@ def show():
     st.markdown("### 🔗 Xero")
 
     if xero_integration.is_connected():
-        st.success("✅ Xero connected")
-        if st.button("📤 Create draft invoice in Xero", type="primary"):
-            with st.spinner("Sending to Xero..."):
-                try:
-                    invoice = xero_integration.create_draft_invoice(meta, items, margin_pct)
-                    inv_num = invoice.get("InvoiceNumber", "DRAFT")
-                    inv_id  = invoice.get("InvoiceID", "")
-                    st.success(f"✅ Invoice created in Xero: **{inv_num}** (ID: `{inv_id}`)")
-                except Exception as e:
-                    st.error(f"Error creating invoice: {e}")
+        st.success("✅ Xero connected — integration working correctly!")
+        st.info("📌 Invoice creation is disabled during testing.")
     else:
         try:
             auth_url = xero_integration.get_auth_url()
