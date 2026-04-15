@@ -491,6 +491,8 @@ def show():
                     st.success(f"✅ Draft quote created in Xero! Quote #{quote_num} — ID: {quote_id}")
                 except Exception as e:
                     st.error(f"❌ Error sending to Xero: {e}")
+                    if hasattr(e, "response") and e.response is not None:
+                        st.json(e.response.json())
     else:
         try:
             auth_url = xero_integration.get_auth_url()
