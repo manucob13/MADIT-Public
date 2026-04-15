@@ -352,8 +352,16 @@ def render_summary_table(summary: pd.DataFrame) -> str:
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 def show():
-    from integrations import xero as xero_integration  # ← movido aquí arriba
-    xero_integration.handle_callback()                  # ← procesa el OAuth callback
+    from integrations import xero as xero_integration
+    xero_integration.handle_callback()
+
+    # ── DEBUG TEMPORAL — borrar después ───────────────────
+    st.write("Secrets keys:", list(st.secrets.keys()))
+    if "xero" in st.secrets:
+        st.write("Xero keys:", list(st.secrets["xero"].keys()))
+    else:
+        st.error("❌ 'xero' NO está en st.secrets")
+    # ──────────────────────────────────────────────────────
 
     st.title("📋 QUOTES")
 
