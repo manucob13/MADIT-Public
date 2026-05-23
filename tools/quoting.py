@@ -268,6 +268,12 @@ def fmt(val) -> str:
         return str(val) if val != "" else ""
 
 
+def add_totals_cost(df: pd.DataFrame) -> pd.DataFrame:
+    totals = {"#": "", "SKU": "", "Description": "TOTAL",
+               "Qty": "", "Unit Cost": "", "Total Cost": df["Total Cost"].sum()}
+    return pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
+
+
 def add_totals_sell(df: pd.DataFrame) -> pd.DataFrame:
     totals = {"#": "", "SKU": "", "Description": "TOTAL",
                "Qty": "", "Unit Price": "", "Total": df["Total"].sum()}
@@ -361,9 +367,9 @@ def show():
 
     if uploaded is None:
         st.info("Upload a NEXTGEN or TECHDATA Excel quote to get started.")
-        # Clear editable state when no file is loaded
-        st.session_state.pop("items_editable", None)
+        st.session_state.pop("items_saved", None)
         st.session_state.pop("quote_file_id", None)
+        st.session_state.pop("edit_mode", None)
         return
 
     # ── Parse only when a new file is uploaded ─────────────────────────────────
@@ -381,14 +387,18 @@ def show():
             st.error("No line items found — is this a valid quote?")
             return
 
-        st.session_state["quote_file_id"]   = file_id
-        st.session_state["distributor"]     = distributor
-        st.session_state["meta"]            = meta
-        # Store a clean copy for the editable table
-        st.session_state["items_editable"]  = items.copy()
+        st.session_state["quote_file_id"] = file_id
+        st.session_state["distributor"]   = distributor
+        st.session_state["meta"]          = meta
+        st.session_state["items_saved"]   = items.copy()   # committed/clean copy
+        st.session_state["edit_mode"]     = False
     else:
         distributor = st.session_state["distributor"]
         meta        = st.session_state["meta"]
+
+    # Working references
+    items     = st.session_state["items_saved"]
+    edit_mode = st.session_state.get("edit_mode", False)
 
     # ── Badge ──────────────────────────────────────────────────────────────────
     badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
@@ -417,82 +427,96 @@ def show():
 
     st.divider()
 
-    # ── Margin ─────────────────────────────────────────────────────────────────
+    # ── Margin input (always visible) ──────────────────────────────────────────
     if "margin_pct" not in st.session_state:
         st.session_state["margin_pct"] = 10.0
 
-    # ── Distributor cost table — EDITABLE ──────────────────────────────────────
-    st.markdown("### 🛒 Distributor Cost")
-    st.caption("✏️ You can edit **Unit Cost**, modify **Qty**, and delete rows using the checkbox on the left.")
+    # ── Distributor cost table ─────────────────────────────────────────────────
+    # Header row: title + Edit / Save-Cancel buttons
+    col_title, col_btn = st.columns([6, 1])
+    with col_title:
+        st.markdown("### 🛒 Distributor Cost")
 
-    edited_df = st.data_editor(
-        st.session_state["items_editable"],
-        key="cost_editor",
-        num_rows="dynamic",         # enables row deletion
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "#": st.column_config.NumberColumn(
-                "#", width="small", disabled=True
-            ),
-            "SKU": st.column_config.TextColumn(
-                "SKU", width="medium", disabled=True
-            ),
-            "Description": st.column_config.TextColumn(
-                "Description", width="large", disabled=True
-            ),
-            "Qty": st.column_config.NumberColumn(
-                "Qty", width="small", min_value=0, step=1, format="%d"
-            ),
-            "Unit Cost": st.column_config.NumberColumn(
-                "Unit Cost", width="medium",
-                min_value=0.0, step=0.01, format="$ %.2f"
-            ),
-            "Total Cost": st.column_config.NumberColumn(
-                "Total Cost", width="medium",
-                disabled=True, format="$ %.2f"
-            ),
-        },
-    )
+    if not edit_mode:
+        # ── READ-ONLY mode ─────────────────────────────────────────────────────
+        with col_btn:
+            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
+            if st.button("✏️ Edit", key="btn_edit", use_container_width=True):
+                # Snapshot the current saved items so the editor starts fresh
+                st.session_state["items_snapshot"] = st.session_state["items_saved"].copy()
+                st.session_state["edit_mode"] = True
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
-    # Recalculate Total Cost whenever Qty or Unit Cost changes
-    if edited_df is not None and not edited_df.empty:
-        edited_df = edited_df.copy()
-        edited_df["Total Cost"] = edited_df["Unit Cost"] * edited_df["Qty"]
-        # Persist the edited state so downstream tables stay in sync
-        st.session_state["items_editable"] = edited_df
-
-    # Working copy for the rest of the page
-    items = st.session_state["items_editable"].copy()
-
-    # Grand total row below the editor
-    if not items.empty:
-        total_cost = items["Total Cost"].sum()
         st.markdown(
-            f'<div style="text-align:right;font-weight:700;font-size:0.85rem;'
-            f'color:#0f1923;padding:6px 4px 0 0;">'
-            f'Total Cost: <span style="font-variant-numeric:tabular-nums;">'
-            f'$ {total_cost:,.2f}</span></div>',
+            render_html_table(add_totals_cost(items), ["Unit Cost", "Total Cost"]),
             unsafe_allow_html=True,
         )
+
+    else:
+        # ── EDIT mode ──────────────────────────────────────────────────────────
+        with col_btn:
+            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
+            save_clicked   = st.button("💾 Save",   key="btn_save",   type="primary",   use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        cancel_col, _ = st.columns([1, 5])
+        with cancel_col:
+            cancel_clicked = st.button("✖ Cancel", key="btn_cancel", use_container_width=True)
+
+        st.caption("✏️ Edit **Unit Cost** or **Qty** inline · Select rows with the checkbox and press **Delete** to remove them")
+
+        # Always feed the snapshot (fixed at edit-start) so internal editor
+        # state drives changes — not a df that keeps getting re-initialised.
+        snapshot = st.session_state.get("items_snapshot", items).copy()
+
+        edited_df = st.data_editor(
+            snapshot,
+            key="cost_editor_widget",
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "#": st.column_config.NumberColumn("#", width="small",  disabled=True),
+                "SKU": st.column_config.TextColumn("SKU", width="medium", disabled=True),
+                "Description": st.column_config.TextColumn("Description", width="large", disabled=True),
+                "Qty": st.column_config.NumberColumn("Qty", width="small",  min_value=0, step=1, format="%d"),
+                "Unit Cost": st.column_config.NumberColumn("Unit Cost",  width="medium", min_value=0.0, step=0.01, format="$ %.2f"),
+                "Total Cost": st.column_config.NumberColumn("Total Cost", width="medium", disabled=True, format="$ %.2f"),
+            },
+        )
+
+        if save_clicked:
+            # Commit: recalculate Total Cost and persist
+            committed = edited_df.copy().reset_index(drop=True)
+            committed["Total Cost"] = committed["Unit Cost"] * committed["Qty"]
+            st.session_state["items_saved"]  = committed
+            st.session_state["edit_mode"]    = False
+            st.session_state.pop("items_snapshot", None)
+            # Clear editor widget state so next edit starts clean
+            st.session_state.pop("cost_editor_widget", None)
+            st.rerun()
+
+        if cancel_clicked:
+            st.session_state["edit_mode"] = False
+            st.session_state.pop("items_snapshot", None)
+            st.session_state.pop("cost_editor_widget", None)
+            st.rerun()
 
     st.divider()
 
     # ── Sell price table ───────────────────────────────────────────────────────
     st.markdown("### 💰 Sell Price with Margin")
 
-    if items.empty:
-        st.warning("No items — add rows or re-upload the quote.")
-    else:
-        df_margin = apply_margin(items, st.session_state["margin_pct"])
-        sell_cols = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
-        st.markdown(
-            render_html_table(
-                add_totals_sell(df_margin[sell_cols].copy()),
-                ["Unit Price", "Total"],
-            ),
-            unsafe_allow_html=True,
-        )
+    df_margin = apply_margin(items, st.session_state["margin_pct"])
+    sell_cols = ["#", "SKU", "Description", "Qty", "Unit Price", "Total"]
+    st.markdown(
+        render_html_table(
+            add_totals_sell(df_margin[sell_cols].copy()),
+            ["Unit Price", "Total"],
+        ),
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
@@ -512,30 +536,28 @@ def show():
             key="margin_pct",
         )
 
-    margin_pct = st.session_state["margin_pct"]
+    margin_pct   = st.session_state["margin_pct"]
+    df_margin    = apply_margin(items, margin_pct)
 
-    if not items.empty:
-        df_margin    = apply_margin(items, margin_pct)
+    cost_total   = items["Total Cost"].sum()
+    cost_gst     = cost_total * 0.10
+    cost_inc_gst = cost_total + cost_gst
+    sell_total   = df_margin["Total"].sum()
+    sell_gst     = sell_total * 0.10
+    sell_inc_gst = sell_total + sell_gst
 
-        cost_total   = items["Total Cost"].sum()
-        cost_gst     = cost_total * 0.10
-        cost_inc_gst = cost_total + cost_gst
-        sell_total   = df_margin["Total"].sum()
-        sell_gst     = sell_total * 0.10
-        sell_inc_gst = sell_total + sell_gst
+    summary = pd.DataFrame([
+        {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),
+         "Difference": fmt(sell_total   - cost_total)},
+        {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),
+         "Difference": fmt(sell_gst     - cost_gst)},
+        {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst),
+         "Difference": fmt(sell_inc_gst - cost_inc_gst)},
+    ])
 
-        summary = pd.DataFrame([
-            {"": "Subtotal (ex. GST)", "Cost": fmt(cost_total),   "Sell Price": fmt(sell_total),
-             "Difference": fmt(sell_total   - cost_total)},
-            {"": "GST (10%)",          "Cost": fmt(cost_gst),     "Sell Price": fmt(sell_gst),
-             "Difference": fmt(sell_gst     - cost_gst)},
-            {"": "Total (inc. GST)",   "Cost": fmt(cost_inc_gst), "Sell Price": fmt(sell_inc_gst),
-             "Difference": fmt(sell_inc_gst - cost_inc_gst)},
-        ])
-
-        _, col_mid, _ = st.columns([1, 2, 1])
-        with col_mid:
-            st.markdown(render_summary_table(summary), unsafe_allow_html=True)
+    _, col_mid, _ = st.columns([1, 2, 1])
+    with col_mid:
+        st.markdown(render_summary_table(summary), unsafe_allow_html=True)
 
     # ── Xero ───────────────────────────────────────────────────────────────────
     st.divider()
