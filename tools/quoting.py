@@ -505,17 +505,13 @@ def show():
         # state drives changes — not a df that keeps getting re-initialised.
         snapshot = st.session_state.get("items_snapshot", items).copy()
 
-        st.data_editor(
+        edited_df = st.data_editor(
             snapshot,
             key="cost_editor_widget",
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_config={
-                # Only disable # and Total Cost.
-                # Disabling text columns (SKU, Description) causes Streamlit to
-                # drop their values from the returned dataframe — so we leave
-                # them editable and reconstruct from the snapshot on Save.
                 "#": st.column_config.NumberColumn("#", width="small", disabled=True),
                 "SKU": st.column_config.TextColumn("SKU", width="medium"),
                 "Description": st.column_config.TextColumn("Description", width="large"),
@@ -526,23 +522,11 @@ def show():
         )
 
         if save_clicked:
-            # Read the internal editor diff from session state — this is more
-            # reliable than the return value for disabled/text columns.
-            editor_state = st.session_state.get("cost_editor_widget", {})
-            deleted_rows = set(editor_state.get("deleted_rows", []))
-            edited_rows  = editor_state.get("edited_rows", {})
-
-            committed_rows = []
-            for i, row in snapshot.iterrows():
-                if i in deleted_rows:
-                    continue
-                r = row.to_dict()
-                # Apply any inline edits (keys can be int or str depending on version)
-                overrides = edited_rows.get(i, edited_rows.get(str(i), {}))
-                r.update(overrides)
-                committed_rows.append(r)
-
-            committed = pd.DataFrame(committed_rows).reset_index(drop=True)
+            # Use edited_df directly — it always holds the full current state
+            # of the editor (edits + deletions) without any key-type ambiguity.
+            committed = edited_df.copy().reset_index(drop=True)
+            committed["Unit Cost"]  = pd.to_numeric(committed["Unit Cost"],  errors="coerce").fillna(0.0)
+            committed["Qty"]        = pd.to_numeric(committed["Qty"],        errors="coerce").fillna(0).astype(int)
             committed["Total Cost"] = committed["Unit Cost"] * committed["Qty"]
             st.session_state["items_saved"] = committed
             st.session_state["edit_mode"]   = False
