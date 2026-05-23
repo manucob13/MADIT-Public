@@ -6,6 +6,7 @@ import io
 import re
 import json
 import pathlib
+import html as _html
 
 
 TOKEN_FILE = pathlib.Path("/tmp/xero_tokens.json")
@@ -74,7 +75,7 @@ def read_xlsx_native(file) -> dict:
 
 def extract_amount(val: str) -> float:
     cleaned = val.replace(",", "")
-    match = re.search(r'\d+\.?\d*', cleaned)   # ← fix: sin doble escape
+    match = re.search(r'\d+\.?\d*', cleaned)
     if match:
         try:
             return float(match.group())
@@ -207,11 +208,35 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                     break
 
     header_idx = None
+    col_map    = {}   # maps logical name → column index, built from header row
     for i, row in df_raw.iterrows():
         rs = " ".join(str(v).strip().lower() for v in row)
         if "line no." in rs or ("part no." in rs and "qty" in rs):
             header_idx = i
+            # Build a dynamic column map from the header row so Description
+            # is found correctly regardless of quote format/version.
+            for col_idx, cell in enumerate(row):
+                label = str(cell).strip().lower()
+                if "long description" in label or label == "description":
+                    col_map["description"] = col_idx
+                elif "customer part" in label:
+                    col_map.setdefault("description_fallback", col_idx)
+                elif label in ("qty", "quantity"):
+                    col_map["qty"] = col_idx
+                elif "unit price" in label or "unit cost" in label:
+                    col_map["unit_cost"] = col_idx
+                elif "ext. price" in label or "ext price" in label or "extended price" in label:
+                    col_map["total_cost"] = col_idx
+                elif "part no" in label and "customer" not in label:
+                    col_map["sku"] = col_idx
             break
+
+    # Resolve description column: prefer Long Description, fall back to Customer Part No.
+    desc_col      = col_map.get("description", col_map.get("description_fallback", 4))
+    qty_col       = col_map.get("qty",       2)
+    sku_col       = col_map.get("sku",       1)
+    unit_cost_col = col_map.get("unit_cost", 7)
+    total_cost_col= col_map.get("total_cost",8)
 
     items = []
     if header_idx is not None:
@@ -227,13 +252,18 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
             except (ValueError, TypeError):
                 continue
             try:
+                # Pick the description: prefer the primary col; if empty, try the other.
+                desc_val = row_vals[desc_col] if desc_col < len(row_vals) else ""
+                if not desc_val and "description_fallback" in col_map:
+                    fb = col_map["description_fallback"]
+                    desc_val = row_vals[fb] if fb < len(row_vals) else ""
                 items.append({
                     "#":           line_counter,
-                    "SKU":         row_vals[1],
-                    "Description": row_vals[3],
-                    "Qty":         int(float(row_vals[2])),
-                    "Unit Cost":   float(row_vals[7].replace(",", "")),
-                    "Total Cost":  float(row_vals[8].replace(",", "")),
+                    "SKU":         row_vals[sku_col]       if sku_col       < len(row_vals) else "",
+                    "Description": desc_val,
+                    "Qty":         int(float(row_vals[qty_col]))                             if qty_col < len(row_vals) else 0,
+                    "Unit Cost":   float(row_vals[unit_cost_col].replace(",", ""))           if unit_cost_col < len(row_vals) else 0.0,
+                    "Total Cost":  float(row_vals[total_cost_col].replace(",", ""))          if total_cost_col < len(row_vals) else 0.0,
                 })
                 line_counter += 1
             except (ValueError, TypeError, IndexError):
@@ -318,7 +348,7 @@ def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
         for col in df.columns:
             val       = row[col]
             css_class = "right" if col in RIGHT_ALIGN_COLS else "left"
-            display   = fmt(val) if col in money_cols else str(val) if val != "" else ""
+            display   = fmt(val) if col in money_cols else (_html.escape(str(val)) if val != "" else "")
             cells    += f'<td class="{css_class}">{display}</td>'
         rows_html += f"<tr{row_class}>{cells}</tr>"
 
@@ -367,20 +397,45 @@ def show():
 
     if uploaded is None:
         st.info("Upload a NEXTGEN or TECHDATA Excel quote to get started.")
+        st.session_state.pop("items_saved", None)
+        st.session_state.pop("quote_file_id", None)
+        st.session_state.pop("edit_mode", None)
         return
 
-    with st.spinner("Processing quote..."):
-        sheets      = read_xlsx_native(uploaded)
-        distributor = detect_distributor(sheets)
-        if distributor == "NEXTGEN":
-            meta, items = parse_nextgen(sheets)
-        else:
-            meta, items = parse_techdata(sheets)
+    # ── Parse only when a new file is uploaded ─────────────────────────────────
+    file_id = (uploaded.name, uploaded.size)
+    if st.session_state.get("quote_file_id") != file_id:
+        with st.spinner("Processing quote..."):
+            sheets      = read_xlsx_native(uploaded)
+            distributor = detect_distributor(sheets)
+            if distributor == "NEXTGEN":
+                meta, items = parse_nextgen(sheets)
+            else:
+                meta, items = parse_techdata(sheets)
 
-    if items.empty:
-        st.error("No line items found — is this a valid quote?")
-        return
+        if items.empty:
+            st.error("No line items found — is this a valid quote?")
+            return
 
+        st.session_state["quote_file_id"] = file_id
+        st.session_state["distributor"]   = distributor
+        st.session_state["meta"]          = meta
+        st.session_state["items_saved"]   = items.copy()   # committed/clean copy
+        st.session_state["edit_mode"]     = False
+    else:
+        # Guard: if somehow items_saved was lost (e.g. session partially reset),
+        # force a re-parse by clearing the file_id and rerunning.
+        if "items_saved" not in st.session_state:
+            st.session_state.pop("quote_file_id", None)
+            st.rerun()
+        distributor = st.session_state["distributor"]
+        meta        = st.session_state["meta"]
+
+    # Working references
+    items     = st.session_state["items_saved"]
+    edit_mode = st.session_state.get("edit_mode", False)
+
+    # ── Badge ──────────────────────────────────────────────────────────────────
     badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
     st.markdown(
         f'<span style="background:{badge_color};color:#fff;padding:3px 10px;'
@@ -407,16 +462,99 @@ def show():
 
     st.divider()
 
-    # ── Margin ─────────────────────────────────────────────────────────────────
+    # ── Margin input (always visible) ──────────────────────────────────────────
     if "margin_pct" not in st.session_state:
         st.session_state["margin_pct"] = 10.0
 
     # ── Distributor cost table ─────────────────────────────────────────────────
-    st.markdown("### 🛒 Distributor Cost")
-    st.markdown(
-        render_html_table(add_totals_cost(items), ["Unit Cost", "Total Cost"]),
-        unsafe_allow_html=True,
-    )
+    # Header row: title + Edit / Save-Cancel buttons
+    col_title, col_btn = st.columns([6, 1])
+    with col_title:
+        st.markdown("### 🛒 Distributor Cost")
+
+    if not edit_mode:
+        # ── READ-ONLY mode ─────────────────────────────────────────────────────
+        with col_btn:
+            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
+            if st.button("✏️ Edit", key="btn_edit", use_container_width=True):
+                # Snapshot the current saved items so the editor starts fresh
+                st.session_state["items_snapshot"] = st.session_state["items_saved"].copy()
+                st.session_state["edit_mode"] = True
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown(
+            render_html_table(add_totals_cost(items), ["Unit Cost", "Total Cost"]),
+            unsafe_allow_html=True,
+        )
+
+    else:
+        # ── EDIT mode ──────────────────────────────────────────────────────────
+        with col_btn:
+            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
+            save_clicked   = st.button("💾 Save",   key="btn_save",   type="primary",   use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        cancel_col, _ = st.columns([1, 5])
+        with cancel_col:
+            cancel_clicked = st.button("✖ Cancel", key="btn_cancel", use_container_width=True)
+
+        st.caption("✏️ Edit **Unit Cost**, **Qty** or **Description** inline · Select rows with the checkbox and press **Delete** to remove them")
+
+        # Always feed the snapshot (fixed at edit-start) so internal editor
+        # state drives changes — not a df that keeps getting re-initialised.
+        snapshot = st.session_state.get("items_snapshot", items).copy()
+
+        st.data_editor(
+            snapshot,
+            key="cost_editor_widget",
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                # Only disable # and Total Cost.
+                # Disabling text columns (SKU, Description) causes Streamlit to
+                # drop their values from the returned dataframe — so we leave
+                # them editable and reconstruct from the snapshot on Save.
+                "#": st.column_config.NumberColumn("#", width="small", disabled=True),
+                "SKU": st.column_config.TextColumn("SKU", width="medium"),
+                "Description": st.column_config.TextColumn("Description", width="large"),
+                "Qty": st.column_config.NumberColumn("Qty", width="small", min_value=0, step=1, format="%d"),
+                "Unit Cost": st.column_config.NumberColumn("Unit Cost", width="medium", min_value=0.0, step=0.01, format="$ %.2f"),
+                "Total Cost": st.column_config.NumberColumn("Total Cost", width="medium", disabled=True, format="$ %.2f"),
+            },
+        )
+
+        if save_clicked:
+            # Read the internal editor diff from session state — this is more
+            # reliable than the return value for disabled/text columns.
+            editor_state = st.session_state.get("cost_editor_widget", {})
+            deleted_rows = set(editor_state.get("deleted_rows", []))
+            edited_rows  = editor_state.get("edited_rows", {})
+
+            committed_rows = []
+            for i, row in snapshot.iterrows():
+                if i in deleted_rows:
+                    continue
+                r = row.to_dict()
+                # Apply any inline edits (keys can be int or str depending on version)
+                overrides = edited_rows.get(i, edited_rows.get(str(i), {}))
+                r.update(overrides)
+                committed_rows.append(r)
+
+            committed = pd.DataFrame(committed_rows).reset_index(drop=True)
+            committed["Total Cost"] = committed["Unit Cost"] * committed["Qty"]
+            st.session_state["items_saved"] = committed
+            st.session_state["edit_mode"]   = False
+            st.session_state.pop("items_snapshot", None)
+            st.session_state.pop("cost_editor_widget", None)
+            st.rerun()
+
+        if cancel_clicked:
+            st.session_state["edit_mode"] = False
+            st.session_state.pop("items_snapshot", None)
+            st.session_state.pop("cost_editor_widget", None)
+            st.rerun()
 
     st.divider()
 
