@@ -469,36 +469,54 @@ def show():
         with cancel_col:
             cancel_clicked = st.button("✖ Cancel", key="btn_cancel", use_container_width=True)
 
-        st.caption("✏️ Edit **Unit Cost** or **Qty** inline · Select rows with the checkbox and press **Delete** to remove them")
+        st.caption("✏️ Edit **Unit Cost**, **Qty** or **Description** inline · Select rows with the checkbox and press **Delete** to remove them")
 
         # Always feed the snapshot (fixed at edit-start) so internal editor
         # state drives changes — not a df that keeps getting re-initialised.
         snapshot = st.session_state.get("items_snapshot", items).copy()
 
-        edited_df = st.data_editor(
+        st.data_editor(
             snapshot,
             key="cost_editor_widget",
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_config={
-                "#": st.column_config.NumberColumn("#", width="small",  disabled=True),
-                "SKU": st.column_config.TextColumn("SKU", width="medium", disabled=True),
-                "Description": st.column_config.TextColumn("Description", width="large", disabled=True),
-                "Qty": st.column_config.NumberColumn("Qty", width="small",  min_value=0, step=1, format="%d"),
-                "Unit Cost": st.column_config.NumberColumn("Unit Cost",  width="medium", min_value=0.0, step=0.01, format="$ %.2f"),
+                # Only disable # and Total Cost.
+                # Disabling text columns (SKU, Description) causes Streamlit to
+                # drop their values from the returned dataframe — so we leave
+                # them editable and reconstruct from the snapshot on Save.
+                "#": st.column_config.NumberColumn("#", width="small", disabled=True),
+                "SKU": st.column_config.TextColumn("SKU", width="medium"),
+                "Description": st.column_config.TextColumn("Description", width="large"),
+                "Qty": st.column_config.NumberColumn("Qty", width="small", min_value=0, step=1, format="%d"),
+                "Unit Cost": st.column_config.NumberColumn("Unit Cost", width="medium", min_value=0.0, step=0.01, format="$ %.2f"),
                 "Total Cost": st.column_config.NumberColumn("Total Cost", width="medium", disabled=True, format="$ %.2f"),
             },
         )
 
         if save_clicked:
-            # Commit: recalculate Total Cost and persist
-            committed = edited_df.copy().reset_index(drop=True)
+            # Read the internal editor diff from session state — this is more
+            # reliable than the return value for disabled/text columns.
+            editor_state = st.session_state.get("cost_editor_widget", {})
+            deleted_rows = set(editor_state.get("deleted_rows", []))
+            edited_rows  = editor_state.get("edited_rows", {})
+
+            committed_rows = []
+            for i, row in snapshot.iterrows():
+                if i in deleted_rows:
+                    continue
+                r = row.to_dict()
+                # Apply any inline edits (keys can be int or str depending on version)
+                overrides = edited_rows.get(i, edited_rows.get(str(i), {}))
+                r.update(overrides)
+                committed_rows.append(r)
+
+            committed = pd.DataFrame(committed_rows).reset_index(drop=True)
             committed["Total Cost"] = committed["Unit Cost"] * committed["Qty"]
-            st.session_state["items_saved"]  = committed
-            st.session_state["edit_mode"]    = False
+            st.session_state["items_saved"] = committed
+            st.session_state["edit_mode"]   = False
             st.session_state.pop("items_snapshot", None)
-            # Clear editor widget state so next edit starts clean
             st.session_state.pop("cost_editor_widget", None)
             st.rerun()
 
