@@ -6,6 +6,7 @@ import io
 import re
 import json
 import pathlib
+import html as _html
 
 
 TOKEN_FILE = pathlib.Path("/tmp/xero_tokens.json")
@@ -318,7 +319,7 @@ def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
         for col in df.columns:
             val       = row[col]
             css_class = "right" if col in RIGHT_ALIGN_COLS else "left"
-            display   = fmt(val) if col in money_cols else str(val) if val != "" else ""
+            display   = fmt(val) if col in money_cols else (_html.escape(str(val)) if val != "" else "")
             cells    += f'<td class="{css_class}">{display}</td>'
         rows_html += f"<tr{row_class}>{cells}</tr>"
 
