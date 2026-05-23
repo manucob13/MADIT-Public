@@ -393,6 +393,11 @@ def show():
         st.session_state["items_saved"]   = items.copy()   # committed/clean copy
         st.session_state["edit_mode"]     = False
     else:
+        # Guard: if somehow items_saved was lost (e.g. session partially reset),
+        # force a re-parse by clearing the file_id and rerunning.
+        if "items_saved" not in st.session_state:
+            st.session_state.pop("quote_file_id", None)
+            st.rerun()
         distributor = st.session_state["distributor"]
         meta        = st.session_state["meta"]
 
