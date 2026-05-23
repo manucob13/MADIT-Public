@@ -6,7 +6,6 @@ import io
 import re
 import json
 import pathlib
-import html as _html
 
 
 TOKEN_FILE = pathlib.Path("/tmp/xero_tokens.json")
@@ -75,7 +74,7 @@ def read_xlsx_native(file) -> dict:
 
 def extract_amount(val: str) -> float:
     cleaned = val.replace(",", "")
-    match = re.search(r'\d+\.?\d*', cleaned)
+    match = re.search(r'\d+\.?\d*', cleaned)   # ← fix: sin doble escape
     if match:
         try:
             return float(match.group())
@@ -319,7 +318,7 @@ def render_html_table(df: pd.DataFrame, money_cols: list) -> str:
         for col in df.columns:
             val       = row[col]
             css_class = "right" if col in RIGHT_ALIGN_COLS else "left"
-            display   = fmt(val) if col in money_cols else (_html.escape(str(val)) if val != "" else "")
+            display   = fmt(val) if col in money_cols else str(val) if val != "" else ""
             cells    += f'<td class="{css_class}">{display}</td>'
         rows_html += f"<tr{row_class}>{cells}</tr>"
 
@@ -368,45 +367,20 @@ def show():
 
     if uploaded is None:
         st.info("Upload a NEXTGEN or TECHDATA Excel quote to get started.")
-        st.session_state.pop("items_saved", None)
-        st.session_state.pop("quote_file_id", None)
-        st.session_state.pop("edit_mode", None)
         return
 
-    # ── Parse only when a new file is uploaded ─────────────────────────────────
-    file_id = (uploaded.name, uploaded.size)
-    if st.session_state.get("quote_file_id") != file_id:
-        with st.spinner("Processing quote..."):
-            sheets      = read_xlsx_native(uploaded)
-            distributor = detect_distributor(sheets)
-            if distributor == "NEXTGEN":
-                meta, items = parse_nextgen(sheets)
-            else:
-                meta, items = parse_techdata(sheets)
+    with st.spinner("Processing quote..."):
+        sheets      = read_xlsx_native(uploaded)
+        distributor = detect_distributor(sheets)
+        if distributor == "NEXTGEN":
+            meta, items = parse_nextgen(sheets)
+        else:
+            meta, items = parse_techdata(sheets)
 
-        if items.empty:
-            st.error("No line items found — is this a valid quote?")
-            return
+    if items.empty:
+        st.error("No line items found — is this a valid quote?")
+        return
 
-        st.session_state["quote_file_id"] = file_id
-        st.session_state["distributor"]   = distributor
-        st.session_state["meta"]          = meta
-        st.session_state["items_saved"]   = items.copy()   # committed/clean copy
-        st.session_state["edit_mode"]     = False
-    else:
-        # Guard: if somehow items_saved was lost (e.g. session partially reset),
-        # force a re-parse by clearing the file_id and rerunning.
-        if "items_saved" not in st.session_state:
-            st.session_state.pop("quote_file_id", None)
-            st.rerun()
-        distributor = st.session_state["distributor"]
-        meta        = st.session_state["meta"]
-
-    # Working references
-    items     = st.session_state["items_saved"]
-    edit_mode = st.session_state.get("edit_mode", False)
-
-    # ── Badge ──────────────────────────────────────────────────────────────────
     badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
     st.markdown(
         f'<span style="background:{badge_color};color:#fff;padding:3px 10px;'
@@ -433,99 +407,16 @@ def show():
 
     st.divider()
 
-    # ── Margin input (always visible) ──────────────────────────────────────────
+    # ── Margin ─────────────────────────────────────────────────────────────────
     if "margin_pct" not in st.session_state:
         st.session_state["margin_pct"] = 10.0
 
     # ── Distributor cost table ─────────────────────────────────────────────────
-    # Header row: title + Edit / Save-Cancel buttons
-    col_title, col_btn = st.columns([6, 1])
-    with col_title:
-        st.markdown("### 🛒 Distributor Cost")
-
-    if not edit_mode:
-        # ── READ-ONLY mode ─────────────────────────────────────────────────────
-        with col_btn:
-            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
-            if st.button("✏️ Edit", key="btn_edit", use_container_width=True):
-                # Snapshot the current saved items so the editor starts fresh
-                st.session_state["items_snapshot"] = st.session_state["items_saved"].copy()
-                st.session_state["edit_mode"] = True
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown(
-            render_html_table(add_totals_cost(items), ["Unit Cost", "Total Cost"]),
-            unsafe_allow_html=True,
-        )
-
-    else:
-        # ── EDIT mode ──────────────────────────────────────────────────────────
-        with col_btn:
-            st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
-            save_clicked   = st.button("💾 Save",   key="btn_save",   type="primary",   use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        cancel_col, _ = st.columns([1, 5])
-        with cancel_col:
-            cancel_clicked = st.button("✖ Cancel", key="btn_cancel", use_container_width=True)
-
-        st.caption("✏️ Edit **Unit Cost**, **Qty** or **Description** inline · Select rows with the checkbox and press **Delete** to remove them")
-
-        # Always feed the snapshot (fixed at edit-start) so internal editor
-        # state drives changes — not a df that keeps getting re-initialised.
-        snapshot = st.session_state.get("items_snapshot", items).copy()
-
-        st.data_editor(
-            snapshot,
-            key="cost_editor_widget",
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                # Only disable # and Total Cost.
-                # Disabling text columns (SKU, Description) causes Streamlit to
-                # drop their values from the returned dataframe — so we leave
-                # them editable and reconstruct from the snapshot on Save.
-                "#": st.column_config.NumberColumn("#", width="small", disabled=True),
-                "SKU": st.column_config.TextColumn("SKU", width="medium"),
-                "Description": st.column_config.TextColumn("Description", width="large"),
-                "Qty": st.column_config.NumberColumn("Qty", width="small", min_value=0, step=1, format="%d"),
-                "Unit Cost": st.column_config.NumberColumn("Unit Cost", width="medium", min_value=0.0, step=0.01, format="$ %.2f"),
-                "Total Cost": st.column_config.NumberColumn("Total Cost", width="medium", disabled=True, format="$ %.2f"),
-            },
-        )
-
-        if save_clicked:
-            # Read the internal editor diff from session state — this is more
-            # reliable than the return value for disabled/text columns.
-            editor_state = st.session_state.get("cost_editor_widget", {})
-            deleted_rows = set(editor_state.get("deleted_rows", []))
-            edited_rows  = editor_state.get("edited_rows", {})
-
-            committed_rows = []
-            for i, row in snapshot.iterrows():
-                if i in deleted_rows:
-                    continue
-                r = row.to_dict()
-                # Apply any inline edits (keys can be int or str depending on version)
-                overrides = edited_rows.get(i, edited_rows.get(str(i), {}))
-                r.update(overrides)
-                committed_rows.append(r)
-
-            committed = pd.DataFrame(committed_rows).reset_index(drop=True)
-            committed["Total Cost"] = committed["Unit Cost"] * committed["Qty"]
-            st.session_state["items_saved"] = committed
-            st.session_state["edit_mode"]   = False
-            st.session_state.pop("items_snapshot", None)
-            st.session_state.pop("cost_editor_widget", None)
-            st.rerun()
-
-        if cancel_clicked:
-            st.session_state["edit_mode"] = False
-            st.session_state.pop("items_snapshot", None)
-            st.session_state.pop("cost_editor_widget", None)
-            st.rerun()
+    st.markdown("### 🛒 Distributor Cost")
+    st.markdown(
+        render_html_table(add_totals_cost(items), ["Unit Cost", "Total Cost"]),
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
