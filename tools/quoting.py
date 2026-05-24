@@ -208,13 +208,11 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                     break
 
     header_idx = None
-    col_map    = {}   # maps logical name → column index, built from header row
+    col_map    = {}
     for i, row in df_raw.iterrows():
         rs = " ".join(str(v).strip().lower() for v in row)
         if "line no." in rs or ("part no." in rs and "qty" in rs):
             header_idx = i
-            # Build a dynamic column map from the header row so Description
-            # is found correctly regardless of quote format/version.
             for col_idx, cell in enumerate(row):
                 label = str(cell).strip().lower()
                 if "long description" in label or label == "description":
@@ -231,7 +229,6 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
                     col_map["sku"] = col_idx
             break
 
-    # Resolve description column: prefer Long Description, fall back to Customer Part No.
     desc_col      = col_map.get("description", col_map.get("description_fallback", 4))
     qty_col       = col_map.get("qty",       2)
     sku_col       = col_map.get("sku",       1)
@@ -252,7 +249,6 @@ def parse_techdata(sheets: dict) -> tuple[dict, pd.DataFrame]:
             except (ValueError, TypeError):
                 continue
             try:
-                # Pick the description: prefer the primary col; if empty, try the other.
                 desc_val = row_vals[desc_col] if desc_col < len(row_vals) else ""
                 if not desc_val and "description_fallback" in col_map:
                     fb = col_map["description_fallback"]
@@ -400,6 +396,7 @@ def show():
         st.session_state.pop("items_saved", None)
         st.session_state.pop("quote_file_id", None)
         st.session_state.pop("edit_mode", None)
+        st.session_state.pop("edit_counter", None)
         return
 
     # ── Parse only when a new file is uploaded ─────────────────────────────────
@@ -420,11 +417,10 @@ def show():
         st.session_state["quote_file_id"] = file_id
         st.session_state["distributor"]   = distributor
         st.session_state["meta"]          = meta
-        st.session_state["items_saved"]   = items.copy()   # committed/clean copy
+        st.session_state["items_saved"]   = items.copy()
         st.session_state["edit_mode"]     = False
+        st.session_state["edit_counter"]  = 0        # ← reset counter on new file
     else:
-        # Guard: if somehow items_saved was lost (e.g. session partially reset),
-        # force a re-parse by clearing the file_id and rerunning.
         if "items_saved" not in st.session_state:
             st.session_state.pop("quote_file_id", None)
             st.rerun()
@@ -467,19 +463,22 @@ def show():
         st.session_state["margin_pct"] = 10.0
 
     # ── Distributor cost table ─────────────────────────────────────────────────
-    # Header row: title + Edit / Save-Cancel buttons
     col_title, col_btn = st.columns([6, 1])
     with col_title:
         st.markdown("### 🛒 Distributor Cost")
+
+    # Clave dinámica: cambia cada vez que se abre el editor
+    editor_key = f"cost_editor_widget_{st.session_state.get('edit_counter', 0)}"
 
     if not edit_mode:
         # ── READ-ONLY mode ─────────────────────────────────────────────────────
         with col_btn:
             st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
             if st.button("✏️ Edit", key="btn_edit", use_container_width=True):
-                # Snapshot the current saved items so the editor starts fresh
                 st.session_state["items_snapshot"] = st.session_state["items_saved"].copy()
-                st.session_state["edit_mode"] = True
+                st.session_state["edit_mode"]    = True
+                # ← Incrementar contador para generar una clave nueva en el editor
+                st.session_state["edit_counter"] = st.session_state.get("edit_counter", 0) + 1
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -492,7 +491,7 @@ def show():
         # ── EDIT mode ──────────────────────────────────────────────────────────
         with col_btn:
             st.markdown("<div style='padding-top:28px'>", unsafe_allow_html=True)
-            save_clicked   = st.button("💾 Save",   key="btn_save",   type="primary",   use_container_width=True)
+            save_clicked = st.button("💾 Save", key="btn_save", type="primary", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
         cancel_col, _ = st.columns([1, 5])
@@ -501,13 +500,11 @@ def show():
 
         st.caption("✏️ Edit **Unit Cost**, **Qty** or **Description** inline · Select rows with the checkbox and press **Delete** to remove them")
 
-        # Always feed the snapshot (fixed at edit-start) so internal editor
-        # state drives changes — not a df that keeps getting re-initialised.
         snapshot = st.session_state.get("items_snapshot", items).copy()
 
         edited_df = st.data_editor(
             snapshot,
-            key="cost_editor_widget",
+            key=editor_key,          # ← clave dinámica
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
@@ -522,8 +519,6 @@ def show():
         )
 
         if save_clicked:
-            # Use edited_df directly — it always holds the full current state
-            # of the editor (edits + deletions) without any key-type ambiguity.
             committed = edited_df.copy().reset_index(drop=True)
             committed["Unit Cost"]  = pd.to_numeric(committed["Unit Cost"],  errors="coerce").fillna(0.0)
             committed["Qty"]        = pd.to_numeric(committed["Qty"],        errors="coerce").fillna(0).astype(int)
@@ -531,13 +526,13 @@ def show():
             st.session_state["items_saved"] = committed
             st.session_state["edit_mode"]   = False
             st.session_state.pop("items_snapshot", None)
-            st.session_state.pop("cost_editor_widget", None)
+            st.session_state.pop(editor_key, None)   # ← usar clave dinámica
             st.rerun()
 
         if cancel_clicked:
             st.session_state["edit_mode"] = False
             st.session_state.pop("items_snapshot", None)
-            st.session_state.pop("cost_editor_widget", None)
+            st.session_state.pop(editor_key, None)   # ← usar clave dinámica
             st.rerun()
 
     st.divider()
