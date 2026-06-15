@@ -7,6 +7,8 @@ import re
 import json
 import pathlib
 import html as _html
+import xlrd
+from datetime import datetime
 
 
 TOKEN_FILE = pathlib.Path("/tmp/xero_tokens.json")
@@ -71,6 +73,49 @@ def read_xlsx_native(file) -> dict:
         return pd.DataFrame(data)
 
     return {name: parse_sheet(path) for name, path in sheet_map.items()}
+
+
+# ── XLS reader (legacy .xls format) ─────────────────────────────────────────────
+def read_xls_native(file) -> dict:
+    content = file.read() if hasattr(file, "read") else open(file, "rb").read()
+    book = xlrd.open_workbook(file_contents=content)
+
+    sheets = {}
+    for sheet in book.sheets():
+        rows = []
+        for r in range(sheet.nrows):
+            row_data = {}
+            for c in range(sheet.ncols):
+                cell = sheet.cell(r, c)
+                if cell.ctype == xlrd.XL_CELL_NUMBER:
+                    val = cell.value
+                    if val == int(val):
+                        row_data[c] = str(int(val))
+                    else:
+                        row_data[c] = str(val)
+                elif cell.ctype == xlrd.XL_CELL_DATE:
+                    dt = xlrd.xldate.xldate_as_datetime(cell.value, book.datemode)
+                    row_data[c] = dt.strftime("%d/%m/%Y")
+                else:
+                    row_data[c] = str(cell.value) if cell.value != "" else ""
+            rows.append(row_data)
+
+        if not rows:
+            sheets[sheet.name] = pd.DataFrame()
+            continue
+
+        max_col = max(max(r.keys()) for r in rows if r)
+        data = [[r.get(c, "") for c in range(max_col + 1)] for r in rows]
+        sheets[sheet.name] = pd.DataFrame(data)
+
+    return sheets
+
+
+# ── Unified reader dispatcher ────────────────────────────────────────────────────
+def read_quote_file(file, filename: str) -> dict:
+    if filename.lower().endswith(".xls") and not filename.lower().endswith(".xlsx"):
+        return read_xls_native(file)
+    return read_xlsx_native(file)
 
 
 def extract_amount(val: str) -> float:
@@ -386,8 +431,8 @@ def show():
     st.title("📋 QUOTES")
 
     uploaded = st.file_uploader(
-        "Upload distributor quote (.xlsx)",
-        type=["xlsx"],
+        "Upload distributor quote (.xlsx or .xls)",
+        type=["xlsx", "xls"],
         key="quote_upload",
     )
 
@@ -403,7 +448,7 @@ def show():
     file_id = (uploaded.name, uploaded.size)
     if st.session_state.get("quote_file_id") != file_id:
         with st.spinner("Processing quote..."):
-            sheets      = read_xlsx_native(uploaded)
+            sheets      = read_quote_file(uploaded, uploaded.name)
             distributor = detect_distributor(sheets)
             if distributor == "NEXTGEN":
                 meta, items = parse_nextgen(sheets)
