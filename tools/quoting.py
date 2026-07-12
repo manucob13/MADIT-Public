@@ -433,9 +433,16 @@ NEW_QUOTE_STATE_KEYS = [
     "original_excel_bytes", "original_excel_name",
 ]
 
+# Selectbox keys that must be dropped whenever the underlying client/contact
+# changes, so they re-initialize from `index=` instead of a stale value.
+CLIENT_FORM_WIDGET_KEYS = ["company_select", "contact_select"]
+
+NEW_COMPANY_LABEL = "➕ New company..."
+NEW_CONTACT_LABEL = "➕ New contact..."
+
 
 def _reset_new_quote_flow():
-    for key in NEW_QUOTE_STATE_KEYS:
+    for key in NEW_QUOTE_STATE_KEYS + CLIENT_FORM_WIDGET_KEYS:
         st.session_state.pop(key, None)
     st.session_state["quote_client"]    = ""
     st.session_state["quote_contact"]   = ""
@@ -451,6 +458,9 @@ def _load_saved_quote(record: dict):
     with st.spinner("Loading saved quote..."):
         detail      = quotes_repo.load_quote_detail(record["id"])
         excel_bytes = quotes_repo.download_quote_excel(detail["filename"])
+
+    for key in CLIENT_FORM_WIDGET_KEYS:
+        st.session_state.pop(key, None)
 
     items = pd.DataFrame(detail["items"])
 
@@ -546,16 +556,67 @@ def _show_new_quote():
             f"— {st.session_state.get('quote_client', '')}"
         )
 
-    # ── Step 1: fecha + formulario del cliente/propuesta ────────────────────
+    # ── Step 1: date + client/proposal form ──────────────────────────────────
     st.markdown("### 📝 Quote Details")
-    fc1, fc2 = st.columns(2)
-    with fc1:
-        st.text_input("Company", key="quote_client")
-        st.text_input("Contact name", key="quote_contact")
-    with fc2:
-        st.text_input("Contact email", key="quote_email")
-        st.text_input("Proposal title", key="quote_title")
 
+    if "clients_db" not in st.session_state:
+        try:
+            st.session_state["clients_db"] = quotes_repo.load_clients_db()
+        except Exception as e:
+            st.session_state["clients_db"] = {}
+            st.warning(f"Could not load clients database: {e}")
+
+    clients_db = st.session_state["clients_db"]
+
+    fc1, fc2 = st.columns(2)
+
+    # ── Company ──────────────────────────────────────────────────────────────
+    with fc1:
+        company_options = sorted(clients_db.keys()) + [NEW_COMPANY_LABEL]
+        current_client   = st.session_state.get("quote_client", "")
+        default_idx = company_options.index(current_client) if current_client in clients_db else len(company_options) - 1
+
+        def _on_company_change():
+            choice = st.session_state["company_select"]
+            st.session_state.pop("contact_select", None)
+            if choice != NEW_COMPANY_LABEL:
+                st.session_state["quote_client"]  = choice
+                st.session_state["quote_contact"] = ""
+                st.session_state["quote_email"]   = ""
+            else:
+                st.session_state["quote_client"] = ""
+
+        st.selectbox("Company", company_options, index=default_idx, key="company_select", on_change=_on_company_change)
+
+        if st.session_state["company_select"] == NEW_COMPANY_LABEL:
+            st.text_input("New company name", key="quote_client")
+
+    # ── Contact (depends on selected company) ───────────────────────────────
+    with fc2:
+        contacts_list  = clients_db.get(st.session_state.get("quote_client", ""), [])
+        contact_names  = [c.get("contact", "") for c in contacts_list if c.get("contact")]
+        contact_options = contact_names + [NEW_CONTACT_LABEL]
+        current_contact = st.session_state.get("quote_contact", "")
+        default_c_idx = contact_options.index(current_contact) if current_contact in contact_names else len(contact_options) - 1
+
+        def _on_contact_change():
+            choice = st.session_state["contact_select"]
+            if choice != NEW_CONTACT_LABEL:
+                match = next((c for c in contacts_list if c.get("contact") == choice), None)
+                st.session_state["quote_contact"] = choice
+                st.session_state["quote_email"]   = match.get("email", "") if match else ""
+            else:
+                st.session_state["quote_contact"] = ""
+                st.session_state["quote_email"]   = ""
+
+        st.selectbox("Contact", contact_options, index=default_c_idx, key="contact_select", on_change=_on_contact_change)
+
+        if st.session_state["contact_select"] == NEW_CONTACT_LABEL:
+            st.text_input("New contact name", key="quote_contact")
+
+        st.text_input("Contact email", key="quote_email")
+
+    st.text_input("Proposal title", key="quote_title")
     st.date_input("Date", key="quote_date_obj", format="DD/MM/YYYY")
 
     st.divider()
@@ -804,6 +865,26 @@ def _show_new_quote():
         if record:
             st.session_state["quote_saved_record"] = record
             st.session_state["loaded_record_id"]   = record["id"]
+
+            try:
+                quotes_repo.upsert_client_contact(
+                    client=st.session_state["quote_client"],
+                    contact=st.session_state["quote_contact"],
+                    email=st.session_state["quote_email"],
+                )
+                # keep the local cache in sync so it's available immediately
+                # without another API round trip
+                clients_db = st.session_state.get("clients_db", {})
+                contacts = clients_db.setdefault(st.session_state["quote_client"], [])
+                names = [c.get("contact", "") for c in contacts]
+                if st.session_state["quote_contact"] and st.session_state["quote_contact"] not in names:
+                    contacts.append({
+                        "contact": st.session_state["quote_contact"],
+                        "email":   st.session_state["quote_email"],
+                    })
+            except Exception as e:
+                st.warning(f"Quote saved, but could not update the clients database: {e}")
+
             st.success(f"✅ Quote saved — Quote #{record.get('quote_number', '—')}")
 
     # ── Xero (only available after saving) ──────────────────────────────────────
