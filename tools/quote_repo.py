@@ -60,64 +60,107 @@ def _upload_excel(filename: str, file_bytes: bytes):
     r.raise_for_status()
 
 
-# ── Función principal: guardar quote ──────────────────────────────────────────
+# ── Guardar / actualizar el detalle completo (meta + items) ───────────────────
+def _data_path(record_id: str) -> str:
+    return f"Quotes/data/{record_id}.json"
+
+
+def _save_detail(record_id: str, detail: dict, message: str):
+    url     = f"{_repo_base()}/contents/{_data_path(record_id)}"
+    content = base64.b64encode(
+        json.dumps(detail, indent=2, ensure_ascii=False, default=str).encode()
+    ).decode()
+    payload = {"message": message, "content": content}
+    r_check = requests.get(url, headers=_headers())
+    if r_check.status_code == 200:
+        payload["sha"] = r_check.json()["sha"]
+    r = requests.put(url, headers=_headers(), json=payload)
+    r.raise_for_status()
+
+
+def load_quote_detail(record_id: str) -> dict:
+    """Devuelve el detalle completo (meta, items, form data) de una oferta guardada."""
+    url = f"{_repo_base()}/contents/{_data_path(record_id)}"
+    r   = requests.get(url, headers=_headers())
+    r.raise_for_status()
+    content = base64.b64decode(r.json()["content"]).decode()
+    return json.loads(content)
+
+
+# ── Función principal: guardar / actualizar quote ──────────────────────────────
 def save_quote(
-    client:       str,
-    contact:      str,
-    title:        str,
-    date:         str,
-    meta:         dict,
+    client:             str,
+    contact:            str,
+    email:              str,
+    title:              str,
+    date:               str,
+    meta:               dict,
     items,
-    margin_pct:   float,
-    distributor:  str,
-    uploaded_file,           # el archivo subido por el usuario
+    margin_pct:         float,
+    distributor:        str,
+    file_bytes:         bytes | None = None,
+    original_filename:  str = "",
+    record_id:          str | None = None,
 ) -> dict:
     """
-    Guarda la quote en MADIT-Private:
-    - Sube el Excel original a Quotes/
-    - Añade una entrada al índice Quotes/index.json
+    Guarda (o actualiza, si se pasa record_id) la oferta en MADIT-Private:
+    - Sube el Excel original a Quotes/ (si se provee file_bytes)
+    - Guarda el detalle completo (meta + items editados) en Quotes/data/{id}.json
+    - Añade / actualiza la entrada en el índice Quotes/index.json
     """
+    is_update = record_id is not None
+    rid = record_id or datetime.now().strftime("%Y%m%d%H%M%S")
 
     # Nombre único del archivo
-    date_clean = date.replace("/", "")
+    date_clean   = date.replace("/", "")
     client_clean = client.replace(" ", "_").replace("/", "-")
-    quote_num  = meta.get("quote_number", "NOQUOTE")
-    filename   = f"{date_clean}_{client_clean}_{quote_num}.xlsx"
+    quote_num    = meta.get("quote_number", "NOQUOTE")
+    filename     = f"{date_clean}_{client_clean}_{quote_num}.xlsx"
 
-    # Subir el Excel original
-    uploaded_file.seek(0)
-    file_bytes = uploaded_file.read()
-    _upload_excel(filename, file_bytes)
+    if file_bytes:
+        _upload_excel(filename, file_bytes)
 
-    # Leer índice actual
-    index, sha = _get_index()
+    cost_total = round(float(items["Total Cost"].sum()), 2)
+    sell_total = round(float(cost_total / (1 - margin_pct / 100)), 2)
 
-    # Crear registro
     record = {
-        "id":           f"{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        "id":           rid,
         "date":         date,
         "client":       client,
         "contact":      contact,
+        "email":        email,
         "title":        title,
         "quote_number": meta.get("quote_number", "—"),
         "expiry":       meta.get("expiry", "—"),
         "currency":     meta.get("currency", "AUD"),
         "distributor":  distributor,
         "margin_pct":   margin_pct,
-        "cost_total":   round(float(items["Total Cost"].sum()), 2),
-        "sell_total":   round(float(items["Total Cost"].sum() / (1 - margin_pct / 100)), 2),
+        "cost_total":   cost_total,
+        "sell_total":   sell_total,
         "filename":     filename,
     }
 
+    # Índice (resumen)
+    index, sha = _get_index()
+    if is_update:
+        index = [r for r in index if r.get("id") != rid]
     index.append(record)
-    _save_index(index, sha, f"Add quote {quote_num} for {client}")
+    _save_index(index, sha, f"{'Update' if is_update else 'Add'} quote {quote_num} for {client}")
+
+    # Detalle completo (para poder reabrirla exactamente como se guardó)
+    detail = {
+        **record,
+        "meta":  meta,
+        "items": items.to_dict(orient="records"),
+    }
+    _save_detail(rid, detail, f"{'Update' if is_update else 'Add'} quote detail {rid}")
 
     return record
 
 
-# ── Cargar historial ───────────────────────────────────────────────────────────
+# ── Cargar historial (resumen) ─────────────────────────────────────────────────
 def load_quotes() -> list:
-    """Devuelve todas las quotes guardadas."""
+    """Devuelve todas las quotes guardadas (resumen para el listado del historial)."""
     index, _ = _get_index()
     return index
 
