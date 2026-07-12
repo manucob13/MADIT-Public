@@ -426,55 +426,189 @@ def render_summary_table(summary: pd.DataFrame) -> str:
     return styles + f'<table class="summary-table">{header}<tbody>{rows_html}</tbody></table>'
 
 
-# ── Main page ──────────────────────────────────────────────────────────────────
-def show():
-    st.title("📋 QUOTES")
+# ── Repository / navigation state helpers ───────────────────────────────────────
+NEW_QUOTE_STATE_KEYS = [
+    "items_saved", "quote_file_id", "meta", "distributor", "edit_mode",
+    "edit_counter", "items_snapshot", "quote_saved_record", "loaded_record_id",
+    "original_excel_bytes", "original_excel_name",
+]
 
-    uploaded = st.file_uploader(
-        "Upload distributor quote (.xlsx or .xls)",
-        type=["xlsx", "xls"],
-        key="quote_upload",
-    )
 
-    if uploaded is None:
-        st.info("Upload a NEXTGEN or TECHDATA Excel quote to get started.")
-        st.session_state.pop("items_saved", None)
-        st.session_state.pop("quote_file_id", None)
-        st.session_state.pop("edit_mode", None)
-        st.session_state.pop("edit_counter", None)
-        return
+def _reset_new_quote_flow():
+    for key in NEW_QUOTE_STATE_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state["quote_client"]    = ""
+    st.session_state["quote_contact"]   = ""
+    st.session_state["quote_email"]     = ""
+    st.session_state["quote_title"]     = ""
+    st.session_state["quote_date_obj"]  = datetime.today().date()
+    st.session_state["margin_pct"]      = 10.0
 
-    # ── Parse only when a new file is uploaded ─────────────────────────────────
-    file_id = (uploaded.name, uploaded.size)
-    if st.session_state.get("quote_file_id") != file_id:
-        with st.spinner("Processing quote..."):
-            sheets      = read_quote_file(uploaded, uploaded.name)
-            distributor = detect_distributor(sheets)
-            if distributor == "NEXTGEN":
-                meta, items = parse_nextgen(sheets)
-            else:
-                meta, items = parse_techdata(sheets)
 
-        if items.empty:
-            st.error("No line items found — is this a valid quote?")
+def _load_saved_quote(record: dict):
+    from tools import quotes_repo
+
+    with st.spinner("Cargando oferta guardada..."):
+        detail      = quotes_repo.load_quote_detail(record["id"])
+        excel_bytes = quotes_repo.download_quote_excel(detail["filename"])
+
+    items = pd.DataFrame(detail["items"])
+
+    try:
+        date_obj = datetime.strptime(detail["date"], "%d/%m/%Y").date()
+    except (ValueError, TypeError):
+        date_obj = datetime.today().date()
+
+    st.session_state["items_saved"]          = items
+    st.session_state["meta"]                 = detail["meta"]
+    st.session_state["distributor"]          = detail["distributor"]
+    st.session_state["margin_pct"]           = detail.get("margin_pct", 10.0)
+    st.session_state["edit_mode"]            = False
+    st.session_state["edit_counter"]         = 0
+    st.session_state["quote_client"]         = detail.get("client", "")
+    st.session_state["quote_contact"]        = detail.get("contact", "")
+    st.session_state["quote_email"]          = detail.get("email", "")
+    st.session_state["quote_title"]          = detail.get("title", "")
+    st.session_state["quote_date_obj"]       = date_obj
+    st.session_state["loaded_record_id"]     = detail["id"]
+    st.session_state["original_excel_bytes"] = excel_bytes
+    st.session_state["original_excel_name"]  = detail["filename"]
+    st.session_state["quote_saved_record"]   = record
+
+
+# ── Historial de Ofertas ─────────────────────────────────────────────────────────
+def _show_history():
+    from tools import quotes_repo
+
+    st.markdown("### 📚 Historial de Ofertas")
+
+    with st.spinner("Cargando historial..."):
+        try:
+            quotes = quotes_repo.load_quotes()
+        except Exception as e:
+            st.error(f"❌ Error cargando historial: {e}")
             return
 
-        st.session_state["quote_file_id"] = file_id
-        st.session_state["distributor"]   = distributor
-        st.session_state["meta"]          = meta
-        st.session_state["items_saved"]   = items.copy()
-        st.session_state["edit_mode"]     = False
-        st.session_state["edit_counter"]  = 0        # ← reset counter on new file
-    else:
-        if "items_saved" not in st.session_state:
-            st.session_state.pop("quote_file_id", None)
-            st.rerun()
-        distributor = st.session_state["distributor"]
-        meta        = st.session_state["meta"]
+    if not quotes:
+        st.info("Aún no hay ofertas guardadas.")
+        return
 
-    # Working references
-    items     = st.session_state["items_saved"]
-    edit_mode = st.session_state.get("edit_mode", False)
+    clients = sorted(set(q.get("client", "—") for q in quotes))
+    col_f, _ = st.columns([1, 3])
+    with col_f:
+        client_filter = st.selectbox("Filtrar por cliente", ["Todos"] + clients)
+
+    filtered = quotes if client_filter == "Todos" else [q for q in quotes if q.get("client") == client_filter]
+
+    grouped: dict[str, list] = {}
+    for q in filtered:
+        grouped.setdefault(q.get("client", "—"), []).append(q)
+
+    for client, recs in sorted(grouped.items(), key=lambda kv: kv[0].lower()):
+
+        def _date_key(r):
+            try:
+                return datetime.strptime(r.get("date", ""), "%d/%m/%Y")
+            except (ValueError, TypeError):
+                return datetime.min
+
+        recs_sorted = sorted(recs, key=_date_key, reverse=True)
+
+        with st.expander(f"🏢 {client}  ·  {len(recs_sorted)} oferta(s)", expanded=(client_filter != "Todos")):
+            hc1, hc2, hc3, hc4, hc5 = st.columns([2.5, 1.5, 2, 1.5, 1])
+            hc1.markdown("**Título**")
+            hc2.markdown("**Fecha**")
+            hc3.markdown("**Cotización**")
+            hc4.markdown("**Total (Sell)**")
+            hc5.markdown("")
+
+            for rec in recs_sorted:
+                c1, c2, c3, c4, c5 = st.columns([2.5, 1.5, 2, 1.5, 1])
+                c1.write(rec.get("title", "—") or "—")
+                c2.write(rec.get("date", "—"))
+                c3.write(f"#{rec.get('quote_number', '—')}  ({rec.get('distributor', '—')})")
+                c4.write(fmt(rec.get("sell_total", 0)))
+                with c5:
+                    if st.button("Abrir", key=f"open_{rec['id']}", use_container_width=True):
+                        _load_saved_quote(rec)
+                        st.session_state["quote_view"] = "new"
+                        st.rerun()
+
+
+# ── Nueva Cotización / Ver Oferta Guardada ──────────────────────────────────────
+def _show_new_quote():
+    from tools import quotes_repo
+
+    loaded_id = st.session_state.get("loaded_record_id")
+    if loaded_id:
+        st.info(
+            f"📂 Viendo oferta guardada: **{st.session_state.get('quote_title', '')}** "
+            f"— {st.session_state.get('quote_client', '')}"
+        )
+
+    # ── Step 1: fecha + formulario del cliente/propuesta ────────────────────
+    st.markdown("### 📝 Datos de la Oferta")
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        st.text_input("Empresa", key="quote_client")
+        st.text_input("Nombre del contacto", key="quote_contact")
+    with fc2:
+        st.text_input("Email del contacto", key="quote_email")
+        st.text_input("Título de la propuesta", key="quote_title")
+
+    st.date_input("Fecha", key="quote_date_obj", format="DD/MM/YYYY")
+
+    st.divider()
+
+    # ── Step 2: subir cotización del distribuidor (omitido si viene del repo) ─
+    if loaded_id:
+        st.caption(f"📎 Excel original: {st.session_state.get('original_excel_name', '')}")
+    else:
+        uploaded = st.file_uploader(
+            "Upload distributor quote (.xlsx or .xls)",
+            type=["xlsx", "xls"],
+            key="quote_upload",
+        )
+
+        if uploaded is None:
+            st.info("Upload a NEXTGEN or TECHDATA Excel quote to get started.")
+            for key in ["items_saved", "quote_file_id"]:
+                st.session_state.pop(key, None)
+            return
+
+        file_id = (uploaded.name, uploaded.size)
+        if st.session_state.get("quote_file_id") != file_id:
+            with st.spinner("Processing quote..."):
+                sheets      = read_quote_file(uploaded, uploaded.name)
+                distributor = detect_distributor(sheets)
+                if distributor == "NEXTGEN":
+                    meta, items = parse_nextgen(sheets)
+                else:
+                    meta, items = parse_techdata(sheets)
+
+            if items.empty:
+                st.error("No line items found — is this a valid quote?")
+                return
+
+            uploaded.seek(0)
+            st.session_state["original_excel_bytes"] = uploaded.read()
+            st.session_state["original_excel_name"]  = uploaded.name
+            st.session_state["quote_file_id"]  = file_id
+            st.session_state["distributor"]    = distributor
+            st.session_state["meta"]           = meta
+            st.session_state["items_saved"]    = items.copy()
+            st.session_state["edit_mode"]      = False
+            st.session_state["edit_counter"]   = 0
+            st.session_state["quote_saved_record"] = None
+
+    if "items_saved" not in st.session_state:
+        st.error("No hay datos de cotización cargados.")
+        return
+
+    distributor = st.session_state["distributor"]
+    meta        = st.session_state["meta"]
+    items       = st.session_state["items_saved"]
+    edit_mode   = st.session_state.get("edit_mode", False)
 
     # ── Badge ──────────────────────────────────────────────────────────────────
     badge_color = "#0077b6" if distributor == "TECHDATA" else "#2d6a4f"
@@ -494,6 +628,10 @@ def show():
     col3.metric("Currency", meta.get("currency",      "AUD"))
 
     with st.expander("More details"):
+        st.write(f"**Cliente:** {st.session_state.get('quote_client', '—') or '—'}")
+        st.write(f"**Contacto:** {st.session_state.get('quote_contact', '—') or '—'}")
+        st.write(f"**Email:** {st.session_state.get('quote_email', '—') or '—'}")
+        st.write(f"**Título propuesta:** {st.session_state.get('quote_title', '—') or '—'}")
         st.write(f"**End User:** {meta.get('end_user', '—')}")
         if distributor == "NEXTGEN":
             st.write(f"**Description:** {meta.get('description', '—')}")
@@ -512,7 +650,6 @@ def show():
     with col_title:
         st.markdown("### 🛒 Distributor Cost")
 
-    # Clave dinámica: cambia cada vez que se abre el editor
     editor_key = f"cost_editor_widget_{st.session_state.get('edit_counter', 0)}"
 
     if not edit_mode:
@@ -522,7 +659,6 @@ def show():
             if st.button("✏️ Edit", key="btn_edit", use_container_width=True):
                 st.session_state["items_snapshot"] = st.session_state["items_saved"].copy()
                 st.session_state["edit_mode"]    = True
-                # ← Incrementar contador para generar una clave nueva en el editor
                 st.session_state["edit_counter"] = st.session_state.get("edit_counter", 0) + 1
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
@@ -549,7 +685,7 @@ def show():
 
         edited_df = st.data_editor(
             snapshot,
-            key=editor_key,          # ← clave dinámica
+            key=editor_key,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
@@ -571,13 +707,13 @@ def show():
             st.session_state["items_saved"] = committed
             st.session_state["edit_mode"]   = False
             st.session_state.pop("items_snapshot", None)
-            st.session_state.pop(editor_key, None)   # ← usar clave dinámica
+            st.session_state.pop(editor_key, None)
             st.rerun()
 
         if cancel_clicked:
             st.session_state["edit_mode"] = False
             st.session_state.pop("items_snapshot", None)
-            st.session_state.pop(editor_key, None)   # ← usar clave dinámica
+            st.session_state.pop(editor_key, None)
             st.rerun()
 
     st.divider()
@@ -636,46 +772,110 @@ def show():
     with col_mid:
         st.markdown(render_summary_table(summary), unsafe_allow_html=True)
 
-    # ── Xero ───────────────────────────────────────────────────────────────────
+    # ── Guardar en Repositorio (MADIT-Private) ──────────────────────────────────
+    st.divider()
+    st.markdown("### 💾 Guardar en Repositorio")
+
+    can_save = bool(st.session_state.get("quote_client", "").strip()) and bool(st.session_state.get("quote_title", "").strip())
+    if not can_save:
+        st.warning("Completa al menos **Empresa** y **Título de la propuesta** para poder guardar.")
+
+    if st.button("💾 Guardar Cotización", type="primary", disabled=not can_save):
+        with st.spinner("Guardando en MADIT-Private..."):
+            try:
+                record = quotes_repo.save_quote(
+                    client=st.session_state["quote_client"],
+                    contact=st.session_state["quote_contact"],
+                    email=st.session_state["quote_email"],
+                    title=st.session_state["quote_title"],
+                    date=st.session_state["quote_date_obj"].strftime("%d/%m/%Y"),
+                    meta=meta,
+                    items=items,
+                    margin_pct=margin_pct,
+                    distributor=distributor,
+                    file_bytes=st.session_state.get("original_excel_bytes"),
+                    original_filename=st.session_state.get("original_excel_name", ""),
+                    record_id=st.session_state.get("loaded_record_id"),
+                )
+            except Exception as e:
+                st.error(f"❌ Error guardando en el repositorio: {e}")
+                record = None
+
+        if record:
+            st.session_state["quote_saved_record"] = record
+            st.session_state["loaded_record_id"]   = record["id"]
+            st.success(f"✅ Oferta guardada — Cotización #{record.get('quote_number', '—')}")
+
+    # ── Xero (sólo disponible tras guardar) ─────────────────────────────────────
     st.divider()
     st.markdown("### 🔗 Send to Xero")
 
-    from integrations import xero as xero_integration
-
-    if xero_integration.is_connected():
-        st.success("✅ Xero connected")
-        if st.button("📤 Send to Xero as Draft Quote", type="primary"):
-            with st.spinner("Sending to Xero..."):
-                try:
-                    result    = xero_integration.create_draft_quote(meta, items, margin_pct)
-                    quote_num = result.get("QuoteNumber", "")
-                    quote_id  = result.get("QuoteID", "")
-                    st.success(f"✅ Draft quote created in Xero! Quote #{quote_num} — ID: {quote_id}")
-                except Exception as e:
-                    st.error(f"❌ Error sending to Xero: {e}")
-                    if hasattr(e, "response") and e.response is not None:
-                        st.json(e.response.json())
+    if not st.session_state.get("quote_saved_record"):
+        st.info("Guarda la oferta en el repositorio antes de enviarla a Xero.")
     else:
-        try:
-            auth_url = xero_integration.get_auth_url()
-            col_connect, col_verify, _ = st.columns([2, 2, 3])
-            with col_connect:
-                st.markdown(
-                    f'<a href="{auth_url}" target="_blank" rel="noopener noreferrer" '
-                    f'style="display:inline-block;background:#1a6fe8;color:#fff;'
-                    f'padding:10px 18px;border-radius:8px;text-decoration:none;'
-                    f'font-size:0.88rem;font-weight:500;">'
-                    f'🔗 Connect to Xero</a>',
-                    unsafe_allow_html=True,
-                )
-            with col_verify:
-                if st.button("🔄 I've connected — verify", type="secondary"):
-                    if TOKEN_FILE.exists():
-                        tokens = json.loads(TOKEN_FILE.read_text())
-                        st.session_state["xero_tokens"] = tokens
-                        TOKEN_FILE.unlink()
-                        st.rerun()
-                    else:
-                        st.warning("Token not found yet — wait a few seconds and try again.")
-        except KeyError:
-            st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
+        from integrations import xero as xero_integration
+
+        if xero_integration.is_connected():
+            st.success("✅ Xero connected")
+            if st.button("📤 Send to Xero as Draft Quote", type="primary"):
+                with st.spinner("Sending to Xero..."):
+                    try:
+                        result    = xero_integration.create_draft_quote(meta, items, margin_pct)
+                        quote_num = result.get("QuoteNumber", "")
+                        quote_id  = result.get("QuoteID", "")
+                        st.success(f"✅ Draft quote created in Xero! Quote #{quote_num} — ID: {quote_id}")
+                    except Exception as e:
+                        st.error(f"❌ Error sending to Xero: {e}")
+                        if hasattr(e, "response") and e.response is not None:
+                            st.json(e.response.json())
+        else:
+            try:
+                auth_url = xero_integration.get_auth_url()
+                col_connect, col_verify, _ = st.columns([2, 2, 3])
+                with col_connect:
+                    st.markdown(
+                        f'<a href="{auth_url}" target="_blank" rel="noopener noreferrer" '
+                        f'style="display:inline-block;background:#1a6fe8;color:#fff;'
+                        f'padding:10px 18px;border-radius:8px;text-decoration:none;'
+                        f'font-size:0.88rem;font-weight:500;">'
+                        f'🔗 Connect to Xero</a>',
+                        unsafe_allow_html=True,
+                    )
+                with col_verify:
+                    if st.button("🔄 I've connected — verify", type="secondary"):
+                        if TOKEN_FILE.exists():
+                            tokens = json.loads(TOKEN_FILE.read_text())
+                            st.session_state["xero_tokens"] = tokens
+                            TOKEN_FILE.unlink()
+                            st.rerun()
+                        else:
+                            st.warning("Token not found yet — wait a few seconds and try again.")
+            except KeyError:
+                st.warning("⚠️ Xero credentials not configured. Add `[xero]` to your Streamlit secrets.")
+
+
+# ── Main page ──────────────────────────────────────────────────────────────────
+def show():
+    st.title("📋 QUOTES")
+
+    if "quote_view" not in st.session_state:
+        st.session_state["quote_view"] = "new"
+        _reset_new_quote_flow()
+
+    nav1, nav2, _ = st.columns([1.3, 1.3, 3])
+    with nav1:
+        if st.button("🆕 Nueva Cotización", use_container_width=True):
+            _reset_new_quote_flow()
+            st.session_state["quote_view"] = "new"
+            st.rerun()
+    with nav2:
+        if st.button("📚 Historial de Ofertas", use_container_width=True):
+            st.session_state["quote_view"] = "history"
+            st.rerun()
+
+    st.divider()
+
+    if st.session_state["quote_view"] == "history":
+        _show_history()
+    else:
+        _show_new_quote()
