@@ -174,7 +174,75 @@ def download_quote_excel(filename: str) -> bytes:
     return base64.b64decode(r.json()["content"])
 
 
-# ── Lista de clientes únicos ───────────────────────────────────────────────────
+# ── Lista de clientes únicos (derivada del histórico de ofertas) ───────────────
 def get_clients() -> list[str]:
     index = load_quotes()
     return sorted(set(q["client"] for q in index if q.get("client")))
+
+
+# ── Base de datos de clientes / contactos (Clients/clients.json) ──────────────
+CLIENTS_PATH = "Clients/clients.json"
+
+
+def _get_clients_db() -> tuple[dict, str | None]:
+    """Lee Clients/clients.json del repo privado. Devuelve (data, sha)."""
+    url = f"{_repo_base()}/contents/{CLIENTS_PATH}"
+    r   = requests.get(url, headers=_headers())
+    if r.status_code == 404:
+        return {}, None
+    r.raise_for_status()
+    content = base64.b64decode(r.json()["content"]).decode()
+    sha     = r.json()["sha"]
+    return json.loads(content), sha
+
+
+def _save_clients_db(data: dict, sha: str | None, message: str):
+    url     = f"{_repo_base()}/contents/{CLIENTS_PATH}"
+    content = base64.b64encode(
+        json.dumps(data, indent=2, ensure_ascii=False).encode()
+    ).decode()
+    payload = {"message": message, "content": content}
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(url, headers=_headers(), json=payload)
+    r.raise_for_status()
+
+
+def load_clients_db() -> dict:
+    """
+    Devuelve {client_name: [{"contact": ..., "email": ...}, ...]}.
+    Vacío si el archivo aún no existe.
+    """
+    data, _ = _get_clients_db()
+    return data
+
+
+def upsert_client_contact(client: str, contact: str, email: str):
+    """
+    Añade el cliente/contacto si no existe, o actualiza el email si el
+    contacto ya existía con un email distinto. No falla si contact/email
+    vienen vacíos (simplemente no agrega una entrada de contacto sin nombre).
+    """
+    client = (client or "").strip()
+    if not client:
+        return
+
+    contact = (contact or "").strip()
+    email   = (email or "").strip()
+
+    data, sha = _get_clients_db()
+    contacts = data.get(client, [])
+
+    found = False
+    for c in contacts:
+        if c.get("contact", "").strip().lower() == contact.lower():
+            if email and c.get("email") != email:
+                c["email"] = email
+            found = True
+            break
+
+    if not found and (contact or email):
+        contacts.append({"contact": contact, "email": email})
+
+    data[client] = contacts
+    _save_clients_db(data, sha, f"Update client contacts for {client}")
