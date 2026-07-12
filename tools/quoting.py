@@ -448,7 +448,7 @@ def _reset_new_quote_flow():
 def _load_saved_quote(record: dict):
     from tools import quotes_repo
 
-    with st.spinner("Cargando oferta guardada..."):
+    with st.spinner("Loading saved quote..."):
         detail      = quotes_repo.load_quote_detail(record["id"])
         excel_bytes = quotes_repo.download_quote_excel(detail["filename"])
 
@@ -476,29 +476,29 @@ def _load_saved_quote(record: dict):
     st.session_state["quote_saved_record"]   = record
 
 
-# ── Historial de Ofertas ─────────────────────────────────────────────────────────
+# ── Quote History ───────────────────────────────────────────────────────────────
 def _show_history():
     from tools import quotes_repo
 
-    st.markdown("### 📚 Historial de Ofertas")
+    st.markdown("### 📚 Quote History")
 
-    with st.spinner("Cargando historial..."):
+    with st.spinner("Loading history..."):
         try:
             quotes = quotes_repo.load_quotes()
         except Exception as e:
-            st.error(f"❌ Error cargando historial: {e}")
+            st.error(f"❌ Error loading history: {e}")
             return
 
     if not quotes:
-        st.info("Aún no hay ofertas guardadas.")
+        st.info("No saved quotes yet.")
         return
 
     clients = sorted(set(q.get("client", "—") for q in quotes))
     col_f, _ = st.columns([1, 3])
     with col_f:
-        client_filter = st.selectbox("Filtrar por cliente", ["Todos"] + clients)
+        client_filter = st.selectbox("Filter by client", ["All"] + clients)
 
-    filtered = quotes if client_filter == "Todos" else [q for q in quotes if q.get("client") == client_filter]
+    filtered = quotes if client_filter == "All" else [q for q in quotes if q.get("client") == client_filter]
 
     grouped: dict[str, list] = {}
     for q in filtered:
@@ -514,11 +514,11 @@ def _show_history():
 
         recs_sorted = sorted(recs, key=_date_key, reverse=True)
 
-        with st.expander(f"🏢 {client}  ·  {len(recs_sorted)} oferta(s)", expanded=(client_filter != "Todos")):
+        with st.expander(f"🏢 {client}  ·  {len(recs_sorted)} quote(s)", expanded=(client_filter != "All")):
             hc1, hc2, hc3, hc4, hc5 = st.columns([2.5, 1.5, 2, 1.5, 1])
-            hc1.markdown("**Título**")
-            hc2.markdown("**Fecha**")
-            hc3.markdown("**Cotización**")
+            hc1.markdown("**Title**")
+            hc2.markdown("**Date**")
+            hc3.markdown("**Quote #**")
             hc4.markdown("**Total (Sell)**")
             hc5.markdown("")
 
@@ -529,40 +529,40 @@ def _show_history():
                 c3.write(f"#{rec.get('quote_number', '—')}  ({rec.get('distributor', '—')})")
                 c4.write(fmt(rec.get("sell_total", 0)))
                 with c5:
-                    if st.button("Abrir", key=f"open_{rec['id']}", use_container_width=True):
+                    if st.button("Open", key=f"open_{rec['id']}", use_container_width=True):
                         _load_saved_quote(rec)
                         st.session_state["quote_view"] = "new"
                         st.rerun()
 
 
-# ── Nueva Cotización / Ver Oferta Guardada ──────────────────────────────────────
+# ── New Quote / View Saved Quote ────────────────────────────────────────────────
 def _show_new_quote():
     from tools import quotes_repo
 
     loaded_id = st.session_state.get("loaded_record_id")
     if loaded_id:
         st.info(
-            f"📂 Viendo oferta guardada: **{st.session_state.get('quote_title', '')}** "
+            f"📂 Viewing saved quote: **{st.session_state.get('quote_title', '')}** "
             f"— {st.session_state.get('quote_client', '')}"
         )
 
     # ── Step 1: fecha + formulario del cliente/propuesta ────────────────────
-    st.markdown("### 📝 Datos de la Oferta")
+    st.markdown("### 📝 Quote Details")
     fc1, fc2 = st.columns(2)
     with fc1:
-        st.text_input("Empresa", key="quote_client")
-        st.text_input("Nombre del contacto", key="quote_contact")
+        st.text_input("Company", key="quote_client")
+        st.text_input("Contact name", key="quote_contact")
     with fc2:
-        st.text_input("Email del contacto", key="quote_email")
-        st.text_input("Título de la propuesta", key="quote_title")
+        st.text_input("Contact email", key="quote_email")
+        st.text_input("Proposal title", key="quote_title")
 
-    st.date_input("Fecha", key="quote_date_obj", format="DD/MM/YYYY")
+    st.date_input("Date", key="quote_date_obj", format="DD/MM/YYYY")
 
     st.divider()
 
-    # ── Step 2: subir cotización del distribuidor (omitido si viene del repo) ─
+    # ── Step 2: upload distributor quote (skipped if loaded from repo) ───────
     if loaded_id:
-        st.caption(f"📎 Excel original: {st.session_state.get('original_excel_name', '')}")
+        st.caption(f"📎 Original Excel: {st.session_state.get('original_excel_name', '')}")
     else:
         uploaded = st.file_uploader(
             "Upload distributor quote (.xlsx or .xls)",
@@ -602,7 +602,7 @@ def _show_new_quote():
             st.session_state["quote_saved_record"] = None
 
     if "items_saved" not in st.session_state:
-        st.error("No hay datos de cotización cargados.")
+        st.error("No quote data loaded.")
         return
 
     distributor = st.session_state["distributor"]
@@ -628,10 +628,10 @@ def _show_new_quote():
     col3.metric("Currency", meta.get("currency",      "AUD"))
 
     with st.expander("More details"):
-        st.write(f"**Cliente:** {st.session_state.get('quote_client', '—') or '—'}")
-        st.write(f"**Contacto:** {st.session_state.get('quote_contact', '—') or '—'}")
+        st.write(f"**Client:** {st.session_state.get('quote_client', '—') or '—'}")
+        st.write(f"**Contact:** {st.session_state.get('quote_contact', '—') or '—'}")
         st.write(f"**Email:** {st.session_state.get('quote_email', '—') or '—'}")
-        st.write(f"**Título propuesta:** {st.session_state.get('quote_title', '—') or '—'}")
+        st.write(f"**Proposal title:** {st.session_state.get('quote_title', '—') or '—'}")
         st.write(f"**End User:** {meta.get('end_user', '—')}")
         if distributor == "NEXTGEN":
             st.write(f"**Description:** {meta.get('description', '—')}")
@@ -772,16 +772,16 @@ def _show_new_quote():
     with col_mid:
         st.markdown(render_summary_table(summary), unsafe_allow_html=True)
 
-    # ── Guardar en Repositorio (MADIT-Private) ──────────────────────────────────
+    # ── Save to Repository (MADIT-Private) ──────────────────────────────────────
     st.divider()
-    st.markdown("### 💾 Guardar en Repositorio")
+    st.markdown("### 💾 Save to Repository")
 
     can_save = bool(st.session_state.get("quote_client", "").strip()) and bool(st.session_state.get("quote_title", "").strip())
     if not can_save:
-        st.warning("Completa al menos **Empresa** y **Título de la propuesta** para poder guardar.")
+        st.warning("Fill in at least **Company** and **Proposal title** to be able to save.")
 
-    if st.button("💾 Guardar Cotización", type="primary", disabled=not can_save):
-        with st.spinner("Guardando en MADIT-Private..."):
+    if st.button("💾 Save Quote", type="primary", disabled=not can_save):
+        with st.spinner("Saving to MADIT-Private..."):
             try:
                 record = quotes_repo.save_quote(
                     client=st.session_state["quote_client"],
@@ -798,20 +798,20 @@ def _show_new_quote():
                     record_id=st.session_state.get("loaded_record_id"),
                 )
             except Exception as e:
-                st.error(f"❌ Error guardando en el repositorio: {e}")
+                st.error(f"❌ Error saving to repository: {e}")
                 record = None
 
         if record:
             st.session_state["quote_saved_record"] = record
             st.session_state["loaded_record_id"]   = record["id"]
-            st.success(f"✅ Oferta guardada — Cotización #{record.get('quote_number', '—')}")
+            st.success(f"✅ Quote saved — Quote #{record.get('quote_number', '—')}")
 
-    # ── Xero (sólo disponible tras guardar) ─────────────────────────────────────
+    # ── Xero (only available after saving) ──────────────────────────────────────
     st.divider()
     st.markdown("### 🔗 Send to Xero")
 
     if not st.session_state.get("quote_saved_record"):
-        st.info("Guarda la oferta en el repositorio antes de enviarla a Xero.")
+        st.info("Save the quote to the repository before sending it to Xero.")
     else:
         from integrations import xero as xero_integration
 
@@ -864,12 +864,12 @@ def show():
 
     nav1, nav2, _ = st.columns([1.3, 1.3, 3])
     with nav1:
-        if st.button("🆕 Nueva Cotización", use_container_width=True):
+        if st.button("🆕 New Quote", use_container_width=True):
             _reset_new_quote_flow()
             st.session_state["quote_view"] = "new"
             st.rerun()
     with nav2:
-        if st.button("📚 Historial de Ofertas", use_container_width=True):
+        if st.button("📚 Quote History", use_container_width=True):
             st.session_state["quote_view"] = "history"
             st.rerun()
 
